@@ -1,0 +1,30 @@
+{
+  "name": "voidroute",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "index.js",
+  "imports": {
+    "#open-sse/*": "./open-sse/*",
+    "#*": "./src/*"
+  },
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "chalk": "^5.3.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "inquirer": "^9.2.22",
+    "jose": "^5.6.3",
+    "module-alias": "^2.2.3",
+    "node-forge": "^1.3.1",
+    "node-machine-id": "^1.1.12",
+    "open": "11.0.0",
+    "open-sse": "file:open-sse",
+    "sql.js": "^1.14.1",
+    "undici": "^6.19.2",
+    "uuid": "^10.0.0"
+  }
+}
