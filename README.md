@@ -1,4 +1,4 @@
-# 🌌 voidRoute
+#  VoidRoute
 
 ![voidRoute CLI Menu](assets/screenshot.png)
 
