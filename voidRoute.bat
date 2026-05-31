@@ -1,5 +1,5 @@
 @echo off
 title voidRoute CLI
 cd /d "%~dp0"
-node index.js
+bun run index.js
 pause
