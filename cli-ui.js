@@ -554,6 +554,8 @@ ${chalk.magenta.bold('  ╚═════════════════�
 
 export async function setupCLI(port) {
   console.clear();
+  // Disable mouse tracking/reporting so mouse clicks don't interfere with the list selector
+  process.stdout.write('\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?1015l');
   displayWelcomeAscii(port);
 
   while (true) {
