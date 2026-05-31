@@ -526,13 +526,13 @@ function displayWelcomeAscii(port) {
       const galaxyRaw = fs.readFileSync(galaxyPath, 'utf8');
       const nameRaw = fs.readFileSync(namePath, 'utf8');
       
-      const galaxyLines = resizeAscii(galaxyRaw, 45, 18);
-      const nameLines = resizeAscii(nameRaw, 75, 18);
+      const galaxyLines = resizeAscii(galaxyRaw, 35, 12);
+      const nameLines = resizeAscii(nameRaw, 70, 12);
       
       const combined = [];
-      for (let i = 0; i < 18; i++) {
-        const gLine = galaxyLines[i] || ' '.repeat(45);
-        const nLine = nameLines[i] || ' '.repeat(75);
+      for (let i = 0; i < 12; i++) {
+        const gLine = galaxyLines[i] || ' '.repeat(35);
+        const nLine = nameLines[i] || ' '.repeat(70);
         combined.push(chalk.cyan(gLine) + '    ' + chalk.magenta.bold(nLine));
       }
       
