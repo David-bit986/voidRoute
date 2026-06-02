@@ -9,7 +9,7 @@ import {
 } from "../services/auth.js";
 import { cacheClaudeHeaders } from "#open-sse/utils/claudeHeaderCache.js";
 import { getSettings } from "#lib/localDb";
-import { getModelInfo, getComboModels } from "../services/model.js";
+import { getModelInfo } from "../services/model.js";
 import { handleChatCore } from "#open-sse/handlers/chatCore.js";
 import { errorResponse, unavailableResponse } from "#open-sse/utils/error.js";
 import { handleBypassRequest } from "#open-sse/utils/bypassHandler.js";

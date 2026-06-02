@@ -564,7 +564,6 @@ export async function setupCLI(port) {
       type: 'list', name: 'action', message: chalk.bold('Main Menu:'),
       choices: [
         { name: '🌐  Manage Providers', value: 'providers' },
-        { name: '🎯  Manage Combos',    value: 'combos' },
         { name: '🛠️   CLI Tools Config', value: 'cli_tools' },
         { name: '⚙️   Settings',         value: 'settings' },
         { name: '📊  Server Status',    value: 'status' },
