@@ -1046,7 +1046,7 @@ export async function manageCliTools(port) {
 
     // Ask for target model if applying and not manual
     let selectedModel = 'ag/gemini-2.5-pro';
-    if (action === 'apply' && tool !== 'manual' && tool !== 'claude') {
+    if (action === 'apply' && tool !== 'manual') {
       const combos = await getCombos();
       const choices = combos.map(c => ({ name: `Combo: ${c.name}`, value: c.name }));
       if (choices.length > 0) choices.push(new inquirer.Separator());
@@ -1099,9 +1099,9 @@ export async function manageCliTools(port) {
         currentSettings.hasCompletedOnboarding = true;
         if (!currentSettings.env) currentSettings.env = {};
         currentSettings.env.ANTHROPIC_BASE_URL = endpointNoV1;
-        currentSettings.env.ANTHROPIC_DEFAULT_OPUS_MODEL = "cc/claude-opus-4-6";
-        currentSettings.env.ANTHROPIC_DEFAULT_SONNET_MODEL = "cc/claude-sonnet-4-6";
-        currentSettings.env.ANTHROPIC_DEFAULT_HAIKU_MODEL = "cc/claude-haiku-4-5-20251001";
+        currentSettings.env.ANTHROPIC_DEFAULT_OPUS_MODEL = selectedModel;
+        currentSettings.env.ANTHROPIC_DEFAULT_SONNET_MODEL = selectedModel;
+        currentSettings.env.ANTHROPIC_DEFAULT_HAIKU_MODEL = selectedModel;
         try {
           if (!fs.existsSync(claudeDir)) fs.mkdirSync(claudeDir, { recursive: true });
           fs.writeFileSync(settingsPath, JSON.stringify(currentSettings, null, 2));
