@@ -77,7 +77,7 @@ export async function getComboModels(modelStr) {
 
   const combo = await getComboByName(modelStr);
   if (combo && combo.models && combo.models.length > 0) {
-    return combo.models;
+    return combo.models.map(m => m.provider ? `${m.provider}/${m.model}` : m.model);
   }
   return null;
 }

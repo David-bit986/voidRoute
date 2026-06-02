@@ -9,21 +9,21 @@ inquirer.prompt = async (questions) => {
   if (step === 0) {
     step++;
     // Simulate selecting 'opencode'
-    return { tool: 'pi' };
+    return { tool: 'opencode' };
   } else if (step === 1) {
     step++;
     // opencode might ask whatDo if connected
     if (questions[0].name === 'whatDo') {
       return { whatDo: 'apply' };
     } else if (questions[0].name === 'modelSelection') {
-      return { modelSelection: 'ag/gemini-2.5-pro' };
+      return { modelSelection: 'mainAGY' };
     }
     return {};
   } else if (step === 2) {
     step++;
     // Now it should definitely ask for model if the previous was whatDo
     if (questions[0].name === 'modelSelection') {
-      return { modelSelection: 'ag/gemini-2.5-pro' };
+      return { modelSelection: 'mainAGY' };
     }
     return {};
   } else {

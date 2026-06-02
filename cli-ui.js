@@ -528,13 +528,13 @@ function displayWelcomeAscii(port) {
       const nameRaw = fs.readFileSync(namePath, 'utf8');
       
       const galaxyLines = resizeAscii(galaxyRaw, 35, 12);
-      const nameLines = resizeAscii(nameRaw, 70, 12);
+      const nameLines = resizeAscii(nameRaw, 100, 12);
       
       const combined = [];
       for (let i = 0; i < 12; i++) {
         const gLine = galaxyLines[i] || ' '.repeat(35);
-        const nLine = nameLines[i] || ' '.repeat(70);
-        combined.push(chalk.cyan(gLine) + '    ' + chalk.magenta.bold(nLine));
+        const nLine = nameLines[i] || ' '.repeat(100);
+        combined.push(chalk.cyan(gLine) + '        ' + chalk.magenta.bold(nLine));
       }
       
       console.log(combined.join('\n'));
