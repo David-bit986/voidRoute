@@ -1,8 +1,9 @@
 import { machineIdSync } from 'node-machine-id';
 import fs from 'node:fs';
+import os from 'os';
+import crypto from 'crypto';
 import path from 'node:path';
-import crypto from 'node:crypto';
-import { DATA_DIR } from '#lib/dataDir';
+import { DATA_DIR } from '#lib/dataDir.js';
 
 const MACHINE_ID_FILE = path.join(DATA_DIR, 'machine-id');
 const AUTH_DIR = path.join(DATA_DIR, 'auth');

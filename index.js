@@ -28,6 +28,28 @@ function createNextRequest(req) {
   };
 }
 
+app.get('/v1/models', async (req, res) => {
+  try {
+    const { getCombos } = await import('#lib/localDb.js');
+    const allCombos = await getCombos();
+    const modelsList = [];
+    
+    for (const c of allCombos) {
+      modelsList.push({ id: c.name, object: 'model', created: Date.now(), owned_by: 'voidRoute' });
+      for (const m of (c.models || [])) {
+        const mId = m.provider ? `${m.provider}/${m.model}` : m.model;
+        if (!modelsList.find(x => x.id === mId)) {
+          modelsList.push({ id: mId, object: 'model', created: Date.now(), owned_by: 'voidRoute' });
+        }
+      }
+    }
+    
+    res.json({ object: 'list', data: modelsList });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.post(['/v1/chat/completions', '/v1/messages'], async (req, res) => {
   try {
     const nextReq = createNextRequest(req);

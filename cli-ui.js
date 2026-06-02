@@ -20,6 +20,7 @@ import {
   KILOCODE_CONFIG, CLINE_CONFIG, QWEN_CONFIG,
 } from './src/lib/oauth/constants/oauth.js';
 import { generatePKCE } from './src/lib/oauth/utils/pkce.js';
+import { getProviderAlias } from './src/shared/constants/providers.js';
 
 // ─── Provider Classification ────────────────────────────────────────────────
 // Providers that use OAuth / device-code flows (NOT simple API keys)
@@ -1143,10 +1144,10 @@ export async function manageCliTools(port) {
         if (selectedCombo) {
           ocModels[selectedModel] = { name: `Combo: ${selectedModel}`, modalities: { input: ["text", "image"], output: ["text"] } };
           for (const m of selectedCombo.models) {
-            const mId = m.provider ? `${m.provider}/${m.model}` : m.model;
+            const mId = m.provider ? `${getProviderAlias(m.provider)}/${m.model}` : m.model;
             // Best effort friendly name since we don't do an API call to all providers here to save time
             const friendlyName = `${m.model} (${m.provider})`;
-            ocModels[mId] = { name: friendlyName, modalities: { input: ["text", "image"], output: ["text"] } };
+            ocModels[mId] = { name: mId, modalities: { input: ["text", "image"], output: ["text"] } };
           }
         } else {
           ocModels[selectedModel] = { name: selectedModel, modalities: { input: ["text", "image"], output: ["text"] } };
@@ -1283,10 +1284,10 @@ export async function manageCliTools(port) {
           if (selectedComboPi) {
             piModels.push({ id: selectedModel, name: `Combo: ${selectedModel}` });
             for (const m of selectedComboPi.models) {
-              const mId = m.provider ? `${m.provider}/${m.model}` : m.model;
+              const mId = m.provider ? `${getProviderAlias(m.provider)}/${m.model}` : m.model;
               const friendlyName = `${m.model} (${m.provider})`;
               if (!piModels.find(x => x.id === mId)) {
-                piModels.push({ id: mId, name: friendlyName });
+                piModels.push({ id: mId, name: mId });
               }
             }
           } else {
