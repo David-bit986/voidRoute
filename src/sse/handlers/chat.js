@@ -12,7 +12,6 @@ import { getSettings } from "#lib/localDb";
 import { getModelInfo, getComboModels } from "../services/model.js";
 import { handleChatCore } from "#open-sse/handlers/chatCore.js";
 import { errorResponse, unavailableResponse } from "#open-sse/utils/error.js";
-import { handleComboChat } from "#open-sse/services/combo.js";
 import { handleBypassRequest } from "#open-sse/utils/bypassHandler.js";
 import { HTTP_STATUS } from "#open-sse/config/runtimeConfig.js";
 import { detectFormatByEndpoint } from "#open-sse/translator/formats.js";
@@ -88,27 +87,6 @@ export async function handleChat(request, clientRawRequest = null) {
   const userAgent = request?.headers?.get("user-agent") || "";
   const bypassResponse = handleBypassRequest(body, modelStr, userAgent, !!settings.ccFilterNaming);
   if (bypassResponse) return bypassResponse.response || bypassResponse;
-
-  // Check if model is a combo (has multiple models with fallback)
-  const comboModels = await getComboModels(modelStr);
-  if (comboModels) {
-    // Check for combo-specific strategy first, fallback to global
-    const comboStrategies = settings.comboStrategies || {};
-    const comboSpecificStrategy = comboStrategies[modelStr]?.fallbackStrategy;
-    const comboStrategy = comboSpecificStrategy || settings.comboStrategy || "fallback";
-    
-    const comboStickyLimit = settings.comboStickyRoundRobinLimit;
-    log.info("CHAT", `Combo "${modelStr}" with ${comboModels.length} models (strategy: ${comboStrategy}, sticky: ${comboStickyLimit})`);
-    return handleComboChat({
-      body,
-      models: comboModels,
-      handleSingleModel: (b, m) => handleSingleModelChat(b, m, clientRawRequest, request, apiKey),
-      log,
-      comboName: modelStr,
-      comboStrategy,
-      comboStickyLimit
-    });
-  }
 
   // Single model request
   return handleSingleModelChat(body, modelStr, clientRawRequest, request, apiKey);

@@ -9,7 +9,7 @@ import {
   getSettings, updateSettings,
   getProviderConnections, createProviderConnection,
   deleteProviderConnection, updateProviderConnection,
-  getCombos, getComboByName, createCombo, updateCombo, deleteCombo,
+  
   getApiKeys, createApiKey, deleteApiKey,
 } from './src/lib/localDb.js';
 import { PROVIDERS as PROVIDER_ENDPOINTS } from './open-sse/config/providers.js';

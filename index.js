@@ -30,16 +30,22 @@ function createNextRequest(req) {
 
 app.get('/v1/models', async (req, res) => {
   try {
-    const { getCombos } = await import('#lib/localDb.js');
-    const allCombos = await getCombos();
+    const { getProviderConnections } = await import('#lib/localDb.js');
+    const { PROVIDER_MODELS } = await import('./open-sse/config/providerModels.js');
+    const { getProviderAlias } = await import('./src/shared/constants/providers.js');
+    
+    const connections = await getProviderConnections();
     const modelsList = [];
     
-    for (const c of allCombos) {
-      modelsList.push({ id: c.name, object: 'model', created: Date.now(), owned_by: 'voidRoute' });
-      for (const m of (c.models || [])) {
-        const mId = m.provider ? `${m.provider}/${m.model}` : m.model;
-        if (!modelsList.find(x => x.id === mId)) {
-          modelsList.push({ id: mId, object: 'model', created: Date.now(), owned_by: 'voidRoute' });
+    for (const conn of connections) {
+      const list = PROVIDER_MODELS[conn.providerId];
+      if (list) {
+        for (const m of list) {
+          const alias = getProviderAlias ? getProviderAlias(conn.providerId) : conn.providerId;
+          const id = alias ? `${alias}/${m}` : m;
+          if (!modelsList.find(x => x.id === id)) {
+            modelsList.push({ id, object: 'model', created: Date.now(), owned_by: 'voidRoute' });
+          }
         }
       }
     }
