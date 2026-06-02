@@ -28,7 +28,7 @@ function createNextRequest(req) {
   };
 }
 
-app.post('/v1/chat/completions', async (req, res) => {
+app.post(['/v1/chat/completions', '/v1/messages'], async (req, res) => {
   try {
     const nextReq = createNextRequest(req);
     const response = await handleChat(nextReq, {

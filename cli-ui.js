@@ -565,7 +565,6 @@ export async function setupCLI(port) {
         { name: '🌐  Manage Providers', value: 'providers' },
         { name: '🎯  Manage Combos',    value: 'combos' },
         { name: '🛠️   CLI Tools Config', value: 'cli_tools' },
-        { name: '🔑  Manage API Keys',  value: 'keys' },
         { name: '⚙️   Settings',         value: 'settings' },
         { name: '📊  Server Status',    value: 'status' },
         { name: '❌  Exit',             value: 'exit' },
@@ -584,7 +583,6 @@ export async function setupCLI(port) {
       console.log(chalk.green(`  │  Endpoint : ${chalk.white(`http://localhost:${port}/v1`)}`));
       console.log(chalk.green(`  │  Providers: ${chalk.white(`${conns.filter(c => c.isActive).length} active / ${conns.length} total`)}`));
       console.log(chalk.green(`  │  Combos   : ${chalk.white(combos.length)}`));
-      console.log(chalk.green(`  │  API Keys : ${chalk.white(keys.length)}`));
       console.log(chalk.green(`  │  RTK Saver: ${settings.rtkEnabled ? chalk.green('ON') : chalk.red('OFF')}`));
       console.log(chalk.green(`  │  Caveman  : ${settings.cavemanEnabled ? chalk.green('ON') : chalk.red('OFF')}`));
       console.log(chalk.green('  └────────────────────────────────────┘\n'));
@@ -603,11 +601,6 @@ export async function setupCLI(port) {
     // ─── CLI TOOLS CONFIG ─────────────────────────────────────────────────
     if (action === 'cli_tools') {
       await manageCliTools(port);
-    }
-
-    // ─── API KEYS ─────────────────────────────────────────────────────────
-    if (action === 'keys') {
-      await manageApiKeys();
     }
 
     // ─── SETTINGS ─────────────────────────────────────────────────────────
@@ -1051,10 +1044,35 @@ async function manageCliTools(port) {
 
     console.log(chalk.cyan(`\n  ── ${action === 'reset' ? 'Resetting' : 'Configuring'} ${tool} ──\n`));
 
+    // Ask for target model if applying and not manual
+    let selectedModel = 'ag/gemini-2.5-pro';
+    if (action === 'apply' && tool !== 'manual' && tool !== 'claude') {
+      const combos = await getCombos();
+      const choices = combos.map(c => ({ name: `Combo: ${c.name}`, value: c.name }));
+      if (choices.length > 0) choices.push(new inquirer.Separator());
+      choices.push({ name: '✍️  Type a custom model name (e.g. ag/gemini-2.5-pro)', value: 'custom' });
+      choices.push({ name: 'Default (ag/gemini-2.5-pro)', value: 'ag/gemini-2.5-pro' });
+
+      const { modelSelection } = await inquirer.prompt([{
+        type: 'list', name: 'modelSelection',
+        message: `Select the default model/combo to use for ${tool}:`,
+        choices
+      }]);
+
+      if (modelSelection === 'custom') {
+        const { customModel } = await inquirer.prompt([{
+          type: 'input', name: 'customModel', message: 'Enter model name:'
+        }]);
+        selectedModel = customModel || selectedModel;
+      } else {
+        selectedModel = modelSelection;
+      }
+    }
+
     // ──── CLAUDE CODE ────────────────────────────────────────────────────
     if (tool === 'claude') {
-      const claudeDir = path.join(os.homedir(), '.claude');
-      const settingsPath = path.join(claudeDir, 'settings.json');
+      const settingsPath = path.join(os.homedir(), '.claude', 'settings.json');
+      const claudeDir = path.dirname(settingsPath);
       
       if (action === 'reset') {
         try {
@@ -1080,7 +1098,7 @@ async function manageCliTools(port) {
         try { if (fs.existsSync(settingsPath)) currentSettings = JSON.parse(fs.readFileSync(settingsPath, 'utf8')); } catch (e) { }
         currentSettings.hasCompletedOnboarding = true;
         if (!currentSettings.env) currentSettings.env = {};
-        currentSettings.env.ANTHROPIC_BASE_URL = `${endpoint}/messages`;
+        currentSettings.env.ANTHROPIC_BASE_URL = endpointNoV1;
         currentSettings.env.ANTHROPIC_DEFAULT_OPUS_MODEL = "cc/claude-opus-4-6";
         currentSettings.env.ANTHROPIC_DEFAULT_SONNET_MODEL = "cc/claude-sonnet-4-6";
         currentSettings.env.ANTHROPIC_DEFAULT_HAIKU_MODEL = "cc/claude-haiku-4-5-20251001";
@@ -1115,23 +1133,32 @@ async function manageCliTools(port) {
       } else {
         let ocSettings = {};
         try { if (fs.existsSync(ocPath)) ocSettings = JSON.parse(fs.readFileSync(ocPath, 'utf8')); } catch (e) { }
+        
+        const ocModels = {
+          "ag/gemini-2.5-pro": { name: "ag/gemini-2.5-pro", modalities: { input: ["text", "image"], output: ["text"] } },
+          "gh/gpt-4o": { name: "gh/gpt-4o", modalities: { input: ["text", "image"], output: ["text"] } },
+          "cc/claude-sonnet-4-6": { name: "cc/claude-sonnet-4-6", modalities: { input: ["text", "image"], output: ["text"] } }
+        };
+        const allCombos = await getCombos();
+        for (const c of allCombos) {
+          ocModels[c.name] = { name: c.name, modalities: { input: ["text", "image"], output: ["text"] } };
+        }
+        ocModels[selectedModel] = { name: selectedModel, modalities: { input: ["text", "image"], output: ["text"] } };
+
         if (!ocSettings.provider) ocSettings.provider = {};
         ocSettings.provider['9router'] = {
           npm: "@ai-sdk/openai-compatible",
           options: { baseURL: endpoint, apiKey: "sk_9router" },
-          models: {
-            "ag/gemini-2.5-pro": { name: "ag/gemini-2.5-pro", modalities: { input: ["text", "image"], output: ["text"] } },
-            "gh/gpt-4o": { name: "gh/gpt-4o", modalities: { input: ["text", "image"], output: ["text"] } },
-            "cc/claude-sonnet-4-6": { name: "cc/claude-sonnet-4-6", modalities: { input: ["text", "image"], output: ["text"] } }
-          }
+          models: ocModels
         };
-        ocSettings.model = "9router/ag/gemini-2.5-pro";
+        ocSettings.model = `9router/${selectedModel}`;
         if (!ocSettings.agent) ocSettings.agent = {};
-        ocSettings.agent.explorer = { description: "Fast explorer subagent", mode: "subagent", model: "9router/ag/gemini-2.5-pro" };
+        ocSettings.agent.explorer = { description: "Fast explorer subagent", mode: "subagent", model: `9router/${selectedModel}` };
         try {
           if (!fs.existsSync(ocDir)) fs.mkdirSync(ocDir, { recursive: true });
           fs.writeFileSync(ocPath, JSON.stringify(ocSettings, null, 2));
           console.log(chalk.green(`  ✅ Successfully updated ${ocPath}`));
+          console.log(chalk.yellow(`  ⚠️ Note: If OpenCode does not load this config, you might need to manually copy it to your active profile (e.g. ~/.config/opencode-profiles/default/opencode.json)`));
         } catch (e) { console.log(chalk.red(`  ❌ Failed to write config: ${e.message}`)); }
       }
     }
@@ -1171,8 +1198,8 @@ async function manageCliTools(port) {
           }
           if (tomlContent.match(/model_provider\s*=/)) tomlContent = tomlContent.replace(/model_provider\s*=\s*".*"/, `model_provider = "9router"`);
           else tomlContent += `\nmodel_provider = "9router"`;
-          if (tomlContent.match(/^model\s*=/m)) tomlContent = tomlContent.replace(/^model\s*=\s*".*"/m, `model = "ag/gemini-2.5-pro"`);
-          else tomlContent += `\nmodel = "ag/gemini-2.5-pro"\n`;
+          if (tomlContent.match(/^model\s*=/m)) tomlContent = tomlContent.replace(/^model\s*=\s*".*"/m, `model = "${selectedModel}"`);
+          else tomlContent += `\nmodel = "${selectedModel}"\n`;
           fs.writeFileSync(cxConfig, tomlContent.trim() + '\n');
           let authData = {};
           if (fs.existsSync(cxAuth)) { try { authData = JSON.parse(fs.readFileSync(cxAuth, 'utf8')); } catch (e) {} }
@@ -1201,7 +1228,7 @@ async function manageCliTools(port) {
         try {
           let conf = fs.existsSync(aiderPath) ? fs.readFileSync(aiderPath, 'utf8') : '';
           conf = conf.replace(/^openai-api-base:.*$/gm, '').replace(/^openai-api-key:.*$/gm, '').replace(/^model:.*$/gm, '').trim();
-          conf += `\n\nopenai-api-base: ${endpoint}\nopenai-api-key: sk_9router\nmodel: openai/ag/gemini-2.5-pro`;
+          conf += `\n\nopenai-api-base: ${endpoint}\nopenai-api-key: sk_9router\nmodel: openai/${selectedModel}`;
           fs.writeFileSync(aiderPath, conf.trim() + '\n');
           console.log(chalk.green(`  ✅ Successfully updated ${aiderPath}`));
         } catch (e) { console.log(chalk.red(`  ❌ Failed to write config: ${e.message}`)); }
@@ -1240,17 +1267,29 @@ async function manageCliTools(port) {
             try { modelsData = JSON.parse(fs.readFileSync(modelsPath, 'utf8')); } catch (e) { }
           }
           if (!modelsData.providers) modelsData.providers = {};
+          
+          const piModels = [
+            { id: "ag/gemini-pro-agent", name: "Gemini 3.1 Pro (High) via Antigravity" },
+            { id: "ag/gemini-3.5-flash-low", name: "Gemini 3.5 Flash (Medium) via Antigravity" },
+            { id: "gh/gpt-4o", name: "GPT-4o via GitHub" },
+            { id: "gh/claude-sonnet-4.6", name: "Claude Sonnet 4.6 via GitHub" },
+            { id: "cc/claude-sonnet-4-6", name: "Claude Sonnet 4.6 via Claude Code" },
+          ];
+          const allCombosForPi = await getCombos();
+          for (const c of allCombosForPi) {
+            if (!piModels.find(m => m.id === c.name)) {
+              piModels.push({ id: c.name, name: `Combo: ${c.name}` });
+            }
+          }
+          if (!piModels.find(m => m.id === selectedModel)) {
+            piModels.push({ id: selectedModel, name: selectedModel });
+          }
+
           modelsData.providers['9router'] = {
             baseUrl: endpoint,
             apiKey: "sk_9router",
             api: "openai-completions",
-            models: [
-              { id: "ag/gemini-pro-agent", name: "Gemini 3.1 Pro (High) via Antigravity" },
-              { id: "ag/gemini-3.5-flash-low", name: "Gemini 3.5 Flash (Medium) via Antigravity" },
-              { id: "gh/gpt-4o", name: "GPT-4o via GitHub" },
-              { id: "gh/claude-sonnet-4.6", name: "Claude Sonnet 4.6 via GitHub" },
-              { id: "cc/claude-sonnet-4-6", name: "Claude Sonnet 4.6 via Claude Code" },
-            ],
+            models: piModels,
           };
           fs.writeFileSync(modelsPath, JSON.stringify(modelsData, null, 2));
           
@@ -1260,13 +1299,13 @@ async function manageCliTools(port) {
             try { settingsData = JSON.parse(fs.readFileSync(settingsPath, 'utf8')); } catch (e) { }
           }
           settingsData.defaultProvider = '9router';
-          settingsData.defaultModel = 'ag/gemini-pro-agent';
+          settingsData.defaultModel = selectedModel;
           fs.writeFileSync(settingsPath, JSON.stringify(settingsData, null, 2));
           
           console.log(chalk.green(`  ✅ Successfully updated Pi Agent config:`));
           console.log(chalk.gray(`     ${modelsPath}`));
           console.log(chalk.gray(`     ${settingsPath}`));
-          console.log(chalk.gray(`     Default model: ag/gemini-pro-agent`));
+          console.log(chalk.gray(`     Default model: ${selectedModel}`));
         } catch (e) { console.log(chalk.red(`  ❌ Failed to write config: ${e.message}`)); }
       }
     }
@@ -1305,8 +1344,8 @@ async function manageCliTools(port) {
           gs.actModeApiProvider = 'openai';
           gs.planModeApiProvider = 'openai';
           gs.openAiBaseUrl = endpointNoV1;
-          gs.openAiModelId = 'ag/gemini-pro-agent';
-          gs.planModeOpenAiModelId = 'ag/gemini-pro-agent';
+          gs.openAiModelId = selectedModel;
+          gs.planModeOpenAiModelId = selectedModel;
           fs.writeFileSync(globalStatePath, JSON.stringify(gs, null, 2));
           
           let sec = {};
