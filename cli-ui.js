@@ -1099,6 +1099,7 @@ export async function manageCliTools(port) {
         currentSettings.hasCompletedOnboarding = true;
         if (!currentSettings.env) currentSettings.env = {};
         currentSettings.env.ANTHROPIC_BASE_URL = endpointNoV1;
+        currentSettings.env.ANTHROPIC_AUTH_TOKEN = "sk_voidRoute";
         currentSettings.env.ANTHROPIC_DEFAULT_OPUS_MODEL = selectedModel;
         currentSettings.env.ANTHROPIC_DEFAULT_SONNET_MODEL = selectedModel;
         currentSettings.env.ANTHROPIC_DEFAULT_HAIKU_MODEL = selectedModel;
