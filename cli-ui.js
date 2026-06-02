@@ -1144,7 +1144,9 @@ export async function manageCliTools(port) {
           ocModels[selectedModel] = { name: `Combo: ${selectedModel}`, modalities: { input: ["text", "image"], output: ["text"] } };
           for (const m of selectedCombo.models) {
             const mId = m.provider ? `${m.provider}/${m.model}` : m.model;
-            ocModels[mId] = { name: mId, modalities: { input: ["text", "image"], output: ["text"] } };
+            // Best effort friendly name since we don't do an API call to all providers here to save time
+            const friendlyName = `${m.model} (${m.provider})`;
+            ocModels[mId] = { name: friendlyName, modalities: { input: ["text", "image"], output: ["text"] } };
           }
         } else {
           ocModels[selectedModel] = { name: selectedModel, modalities: { input: ["text", "image"], output: ["text"] } };
@@ -1282,8 +1284,9 @@ export async function manageCliTools(port) {
             piModels.push({ id: selectedModel, name: `Combo: ${selectedModel}` });
             for (const m of selectedComboPi.models) {
               const mId = m.provider ? `${m.provider}/${m.model}` : m.model;
+              const friendlyName = `${m.model} (${m.provider})`;
               if (!piModels.find(x => x.id === mId)) {
-                piModels.push({ id: mId, name: mId });
+                piModels.push({ id: mId, name: friendlyName });
               }
             }
           } else {
