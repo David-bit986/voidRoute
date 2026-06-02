@@ -2,12 +2,12 @@
 
 ![voidRoute CLI Menu](assets/screenshot.png)
 
-voidRoute is a terminal-based CLI aggregator and local router for AI provider APIs. It runs the 9Router proxy backend locally and provides an interactive terminal user interface (TUI).
+voidRoute is a terminal-based CLI aggregator and local router for AI provider APIs. It runs the voidRoute proxy backend locally and provides an interactive terminal user interface (TUI).
 
 ---
 
 ## 🎨 Inspiration
-This project uses the database schema, token rotation, and SSE proxy backend from the open-source **[9Router](https://github.com/decolua/9router)** server. It wraps these services in a command-line interface.
+This project uses the database schema, token rotation, and SSE proxy backend from the open-source **[voidRoute](https://github.com/decolua/voidRoute)** server. It wraps these services in a command-line interface.
 
 ---
 

@@ -958,11 +958,11 @@ async function manageSettings() {
 // ═══════════════════════════════════════════════════════════════════════════
 //  CLI TOOLS CONFIGURATIONS
 // ═══════════════════════════════════════════════════════════════════════════
-async function manageCliTools(port) {
+export async function manageCliTools(port) {
   const endpoint = `http://localhost:${port}/v1`;
   const endpointNoV1 = `http://localhost:${port}`;
   
-  // Helper: detect if a tool already has 9router config
+  // Helper: detect if a tool already has voidRoute config
   function detectStatus(tool) {
     try {
       if (tool === 'claude') {
@@ -975,12 +975,12 @@ async function manageCliTools(port) {
         const op = path.join(os.homedir(), '.config', 'opencode', 'opencode.json');
         if (!fs.existsSync(op)) return null;
         const s = JSON.parse(fs.readFileSync(op, 'utf8'));
-        return s?.provider?.['9router'] ? 'connected' : null;
+        return s?.provider?.['voidRoute'] ? 'connected' : null;
       }
       if (tool === 'codex') {
         const cp = path.join(os.homedir(), '.codex', 'config.toml');
         if (!fs.existsSync(cp)) return null;
-        return fs.readFileSync(cp, 'utf8').includes('9router') ? 'connected' : null;
+        return fs.readFileSync(cp, 'utf8').includes('voidRoute') ? 'connected' : null;
       }
       if (tool === 'aider') {
         const ap = path.join(os.homedir(), '.aider.conf.yml');
@@ -991,7 +991,7 @@ async function manageCliTools(port) {
         const mp = path.join(os.homedir(), '.pi', 'agent', 'models.json');
         if (!fs.existsSync(mp)) return null;
         const s = JSON.parse(fs.readFileSync(mp, 'utf8'));
-        return s?.providers?.['9router'] ? 'connected' : null;
+        return s?.providers?.['voidRoute'] ? 'connected' : null;
       }
       if (tool === 'cline') {
         const gp = path.join(os.homedir(), '.cline', 'data', 'globalState.json');
@@ -1031,10 +1031,10 @@ async function manageCliTools(port) {
     let action = 'apply';
     if (status === 'connected') {
       const { whatDo } = await inquirer.prompt([{
-        type: 'list', name: 'whatDo', message: `${tool} is already configured with 9Router. What do you want to do?`,
+        type: 'list', name: 'whatDo', message: `${tool} is already configured with voidRoute. What do you want to do?`,
         choices: [
           { name: '🔄  Re-apply / Update config', value: 'apply' },
-          { name: '🗑️   Remove 9Router config (reset to defaults)', value: 'reset' },
+          { name: '🗑️   Remove voidRoute config (reset to defaults)', value: 'reset' },
           { name: '🔙  Cancel', value: 'cancel' },
         ],
       }]);
@@ -1088,7 +1088,7 @@ async function manageCliTools(port) {
               if (Object.keys(s.env).length === 0) delete s.env;
             }
             fs.writeFileSync(settingsPath, JSON.stringify(s, null, 2));
-            console.log(chalk.green(`  ✅ 9Router config removed from Claude Code.`));
+            console.log(chalk.green(`  ✅ voidRoute config removed from Claude Code.`));
           } else {
             console.log(chalk.gray('  No settings file found.'));
           }
@@ -1118,14 +1118,14 @@ async function manageCliTools(port) {
         try {
           if (fs.existsSync(ocPath)) {
             let s = JSON.parse(fs.readFileSync(ocPath, 'utf8'));
-            if (s.provider) delete s.provider['9router'];
-            if (s.model?.startsWith('9router/')) delete s.model;
-            if (s.agent?.explorer?.model?.startsWith('9router/')) {
+            if (s.provider) delete s.provider['voidRoute'];
+            if (s.model?.startsWith('voidRoute/')) delete s.model;
+            if (s.agent?.explorer?.model?.startsWith('voidRoute/')) {
               delete s.agent.explorer;
               if (Object.keys(s.agent).length === 0) delete s.agent;
             }
             fs.writeFileSync(ocPath, JSON.stringify(s, null, 2));
-            console.log(chalk.green(`  ✅ 9Router config removed from OpenCode.`));
+            console.log(chalk.green(`  ✅ voidRoute config removed from OpenCode.`));
           } else {
             console.log(chalk.gray('  No config file found.'));
           }
@@ -1134,26 +1134,30 @@ async function manageCliTools(port) {
         let ocSettings = {};
         try { if (fs.existsSync(ocPath)) ocSettings = JSON.parse(fs.readFileSync(ocPath, 'utf8')); } catch (e) { }
         
-        const ocModels = {
-          "ag/gemini-2.5-pro": { name: "ag/gemini-2.5-pro", modalities: { input: ["text", "image"], output: ["text"] } },
-          "gh/gpt-4o": { name: "gh/gpt-4o", modalities: { input: ["text", "image"], output: ["text"] } },
-          "cc/claude-sonnet-4-6": { name: "cc/claude-sonnet-4-6", modalities: { input: ["text", "image"], output: ["text"] } }
-        };
+        let ocModels = {};
+
         const allCombos = await getCombos();
-        for (const c of allCombos) {
-          ocModels[c.name] = { name: c.name, modalities: { input: ["text", "image"], output: ["text"] } };
+        const selectedCombo = allCombos.find(c => c.name === selectedModel);
+
+        if (selectedCombo) {
+          ocModels[selectedModel] = { name: `Combo: ${selectedModel}`, modalities: { input: ["text", "image"], output: ["text"] } };
+          for (const m of selectedCombo.models) {
+            const mId = m.provider ? `${m.provider}/${m.model}` : m.model;
+            ocModels[mId] = { name: mId, modalities: { input: ["text", "image"], output: ["text"] } };
+          }
+        } else {
+          ocModels[selectedModel] = { name: selectedModel, modalities: { input: ["text", "image"], output: ["text"] } };
         }
-        ocModels[selectedModel] = { name: selectedModel, modalities: { input: ["text", "image"], output: ["text"] } };
 
         if (!ocSettings.provider) ocSettings.provider = {};
-        ocSettings.provider['9router'] = {
+        ocSettings.provider['voidRoute'] = {
           npm: "@ai-sdk/openai-compatible",
-          options: { baseURL: endpoint, apiKey: "sk_9router" },
+          options: { baseURL: endpoint, apiKey: "sk_voidRoute" },
           models: ocModels
         };
-        ocSettings.model = `9router/${selectedModel}`;
+        ocSettings.model = `voidRoute/${selectedModel}`;
         if (!ocSettings.agent) ocSettings.agent = {};
-        ocSettings.agent.explorer = { description: "Fast explorer subagent", mode: "subagent", model: `9router/${selectedModel}` };
+        ocSettings.agent.explorer = { description: "Fast explorer subagent", mode: "subagent", model: `voidRoute/${selectedModel}` };
         try {
           if (!fs.existsSync(ocDir)) fs.mkdirSync(ocDir, { recursive: true });
           fs.writeFileSync(ocPath, JSON.stringify(ocSettings, null, 2));
@@ -1172,38 +1176,38 @@ async function manageCliTools(port) {
         try {
           if (fs.existsSync(cxConfig)) {
             let toml = fs.readFileSync(cxConfig, 'utf8');
-            toml = toml.replace(/\[model_providers\.9router\][\s\S]*?(?=\n\[|$)/g, '');
-            if (toml.match(/model_provider\s*=\s*"9router"/)) {
-              toml = toml.replace(/model_provider\s*=\s*"9router"/, '');
+            toml = toml.replace(/\[model_providers\.voidRoute\][\s\S]*?(?=\n\[|$)/g, '');
+            if (toml.match(/model_provider\s*=\s*"voidRoute"/)) {
+              toml = toml.replace(/model_provider\s*=\s*"voidRoute"/, '');
               toml = toml.replace(/^model\s*=.*$/m, '');
             }
             fs.writeFileSync(cxConfig, toml.replace(/\n{3,}/g, '\n\n').trim() + '\n');
           }
           if (fs.existsSync(cxAuth)) {
             let auth = JSON.parse(fs.readFileSync(cxAuth, 'utf8'));
-            if (auth.auth_mode === 'apikey' && auth.OPENAI_API_KEY === 'sk_9router') {
+            if (auth.auth_mode === 'apikey' && auth.OPENAI_API_KEY === 'sk_voidRoute') {
               delete auth.OPENAI_API_KEY;
               delete auth.auth_mode;
             }
             fs.writeFileSync(cxAuth, JSON.stringify(auth, null, 2));
           }
-          console.log(chalk.green(`  ✅ 9Router config removed from Codex.`));
+          console.log(chalk.green(`  ✅ voidRoute config removed from Codex.`));
         } catch (e) { console.log(chalk.red(`  ❌ ${e.message}`)); }
       } else {
         try {
           if (!fs.existsSync(cxDir)) fs.mkdirSync(cxDir, { recursive: true });
           let tomlContent = fs.existsSync(cxConfig) ? fs.readFileSync(cxConfig, 'utf8') : '';
-          if (!tomlContent.includes('[model_providers.9router]')) {
-            tomlContent += `\n[model_providers.9router]\nname = "9Router"\nbase_url = "${endpoint}"\nwire_api = "responses"\n`;
+          if (!tomlContent.includes('[model_providers.voidRoute]')) {
+            tomlContent += `\n[model_providers.voidRoute]\nname = "voidRoute"\nbase_url = "${endpoint}"\nwire_api = "responses"\n`;
           }
-          if (tomlContent.match(/model_provider\s*=/)) tomlContent = tomlContent.replace(/model_provider\s*=\s*".*"/, `model_provider = "9router"`);
-          else tomlContent += `\nmodel_provider = "9router"`;
+          if (tomlContent.match(/model_provider\s*=/)) tomlContent = tomlContent.replace(/model_provider\s*=\s*".*"/, `model_provider = "voidRoute"`);
+          else tomlContent += `\nmodel_provider = "voidRoute"`;
           if (tomlContent.match(/^model\s*=/m)) tomlContent = tomlContent.replace(/^model\s*=\s*".*"/m, `model = "${selectedModel}"`);
           else tomlContent += `\nmodel = "${selectedModel}"\n`;
           fs.writeFileSync(cxConfig, tomlContent.trim() + '\n');
           let authData = {};
           if (fs.existsSync(cxAuth)) { try { authData = JSON.parse(fs.readFileSync(cxAuth, 'utf8')); } catch (e) {} }
-          authData.OPENAI_API_KEY = "sk_9router"; authData.auth_mode = "apikey";
+          authData.OPENAI_API_KEY = "sk_voidRoute"; authData.auth_mode = "apikey";
           fs.writeFileSync(cxAuth, JSON.stringify(authData, null, 2));
           console.log(chalk.green(`  ✅ Successfully updated ${cxConfig}`));
         } catch (e) { console.log(chalk.red(`  ❌ Failed to write config: ${e.message}`)); }
@@ -1219,7 +1223,7 @@ async function manageCliTools(port) {
             let conf = fs.readFileSync(aiderPath, 'utf8');
             conf = conf.replace(/^openai-api-base:.*$/gm, '').replace(/^openai-api-key:.*$/gm, '').replace(/^model:.*$/gm, '');
             fs.writeFileSync(aiderPath, conf.replace(/\n{3,}/g, '\n\n').trim() + '\n');
-            console.log(chalk.green(`  ✅ 9Router config removed from Aider.`));
+            console.log(chalk.green(`  ✅ voidRoute config removed from Aider.`));
           } else {
             console.log(chalk.gray('  No config file found.'));
           }
@@ -1228,7 +1232,7 @@ async function manageCliTools(port) {
         try {
           let conf = fs.existsSync(aiderPath) ? fs.readFileSync(aiderPath, 'utf8') : '';
           conf = conf.replace(/^openai-api-base:.*$/gm, '').replace(/^openai-api-key:.*$/gm, '').replace(/^model:.*$/gm, '').trim();
-          conf += `\n\nopenai-api-base: ${endpoint}\nopenai-api-key: sk_9router\nmodel: openai/${selectedModel}`;
+          conf += `\n\nopenai-api-base: ${endpoint}\nopenai-api-key: sk_voidRoute\nmodel: openai/${selectedModel}`;
           fs.writeFileSync(aiderPath, conf.trim() + '\n');
           console.log(chalk.green(`  ✅ Successfully updated ${aiderPath}`));
         } catch (e) { console.log(chalk.red(`  ❌ Failed to write config: ${e.message}`)); }
@@ -1244,61 +1248,61 @@ async function manageCliTools(port) {
         try {
           if (fs.existsSync(modelsPath)) {
             let m = JSON.parse(fs.readFileSync(modelsPath, 'utf8'));
-            if (m.providers) delete m.providers['9router'];
+            if (m.providers) delete m.providers['voidRoute'];
             fs.writeFileSync(modelsPath, JSON.stringify(m, null, 2));
           }
           if (fs.existsSync(settingsPath)) {
             let s = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
-            if (s.defaultProvider === '9router') {
+            if (s.defaultProvider === 'voidRoute') {
               delete s.defaultProvider;
               delete s.defaultModel;
             }
             fs.writeFileSync(settingsPath, JSON.stringify(s, null, 2));
           }
-          console.log(chalk.green(`  ✅ 9Router config removed from Pi Agent.`));
+          console.log(chalk.green(`  ✅ voidRoute config removed from Pi Agent.`));
         } catch (e) { console.log(chalk.red(`  ❌ ${e.message}`)); }
       } else {
         try {
           if (!fs.existsSync(piDir)) fs.mkdirSync(piDir, { recursive: true });
           
-          // Write models.json with 9router provider
+          // Write models.json with voidRoute provider
           let modelsData = {};
           if (fs.existsSync(modelsPath)) {
             try { modelsData = JSON.parse(fs.readFileSync(modelsPath, 'utf8')); } catch (e) { }
           }
           if (!modelsData.providers) modelsData.providers = {};
           
-          const piModels = [
-            { id: "ag/gemini-pro-agent", name: "Gemini 3.1 Pro (High) via Antigravity" },
-            { id: "ag/gemini-3.5-flash-low", name: "Gemini 3.5 Flash (Medium) via Antigravity" },
-            { id: "gh/gpt-4o", name: "GPT-4o via GitHub" },
-            { id: "gh/claude-sonnet-4.6", name: "Claude Sonnet 4.6 via GitHub" },
-            { id: "cc/claude-sonnet-4-6", name: "Claude Sonnet 4.6 via Claude Code" },
-          ];
+          let piModels = [];
+
           const allCombosForPi = await getCombos();
-          for (const c of allCombosForPi) {
-            if (!piModels.find(m => m.id === c.name)) {
-              piModels.push({ id: c.name, name: `Combo: ${c.name}` });
+          const selectedComboPi = allCombosForPi.find(c => c.name === selectedModel);
+
+          if (selectedComboPi) {
+            piModels.push({ id: selectedModel, name: `Combo: ${selectedModel}` });
+            for (const m of selectedComboPi.models) {
+              const mId = m.provider ? `${m.provider}/${m.model}` : m.model;
+              if (!piModels.find(x => x.id === mId)) {
+                piModels.push({ id: mId, name: mId });
+              }
             }
-          }
-          if (!piModels.find(m => m.id === selectedModel)) {
+          } else {
             piModels.push({ id: selectedModel, name: selectedModel });
           }
 
-          modelsData.providers['9router'] = {
+          modelsData.providers['voidRoute'] = {
             baseUrl: endpoint,
-            apiKey: "sk_9router",
+            apiKey: "sk_voidRoute",
             api: "openai-completions",
             models: piModels,
           };
           fs.writeFileSync(modelsPath, JSON.stringify(modelsData, null, 2));
           
-          // Update settings.json with 9router as default
+          // Update settings.json with voidRoute as default
           let settingsData = {};
           if (fs.existsSync(settingsPath)) {
             try { settingsData = JSON.parse(fs.readFileSync(settingsPath, 'utf8')); } catch (e) { }
           }
-          settingsData.defaultProvider = '9router';
+          settingsData.defaultProvider = 'voidRoute';
           settingsData.defaultModel = selectedModel;
           fs.writeFileSync(settingsPath, JSON.stringify(settingsData, null, 2));
           
@@ -1333,7 +1337,7 @@ async function manageCliTools(port) {
             delete sec.openAiApiKey;
             fs.writeFileSync(secretsPath, JSON.stringify(sec, null, 2));
           }
-          console.log(chalk.green(`  ✅ 9Router config removed from Cline.`));
+          console.log(chalk.green(`  ✅ voidRoute config removed from Cline.`));
         } catch (e) { console.log(chalk.red(`  ❌ ${e.message}`)); }
       } else {
         try {
@@ -1350,7 +1354,7 @@ async function manageCliTools(port) {
           
           let sec = {};
           if (fs.existsSync(secretsPath)) { try { sec = JSON.parse(fs.readFileSync(secretsPath, 'utf8')); } catch (e) {} }
-          sec.openAiApiKey = 'sk_9router';
+          sec.openAiApiKey = 'sk_voidRoute';
           fs.writeFileSync(secretsPath, JSON.stringify(sec, null, 2));
           
           console.log(chalk.green(`  ✅ Successfully updated Cline config.`));
@@ -1365,7 +1369,7 @@ async function manageCliTools(port) {
       console.log(chalk.gray('  2. Enable "OpenAI API key" option'));
       console.log(chalk.gray('  3. Set the Base URL to:'));
       console.log(chalk.yellow(`     ${endpoint}`));
-      console.log(chalk.gray('  4. Set API Key to any dummy value (e.g. sk_9router)'));
+      console.log(chalk.gray('  4. Set API Key to any dummy value (e.g. sk_voidRoute)'));
       console.log(chalk.gray('  5. Click "View All Model" → "Add Custom Model"'));
       console.log(chalk.gray('  6. Add model names like "ag/gemini-2.5-pro" or "gh/gpt-4o"'));
     }

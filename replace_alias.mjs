@@ -18,5 +18,5 @@ function replaceInDir(dir) {
   }
 }
 
-replaceInDir('C:/Users/tanas/Desktop/9router-cli/src');
-replaceInDir('C:/Users/tanas/Desktop/9router-cli/open-sse');
+replaceInDir('C:/Users/tanas/Desktop/voidRoute-cli/src');
+replaceInDir('C:/Users/tanas/Desktop/voidRoute-cli/open-sse');

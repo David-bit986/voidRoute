@@ -1,8 +1,8 @@
 import fs from 'fs';
 import path from 'path';
 
-const SRC_DIR = 'C:/Users/tanas/Desktop/9router';
-const DEST_DIR = 'C:/Users/tanas/Desktop/9router-cli';
+const SRC_DIR = 'C:/Users/tanas/Desktop/voidRoute';
+const DEST_DIR = 'C:/Users/tanas/Desktop/voidRoute-cli';
 
 function copyDir(src, dest) {
   if (!fs.existsSync(dest)) fs.mkdirSync(dest, { recursive: true });
@@ -43,7 +43,7 @@ const pkgPath = path.join(SRC_DIR, 'package.json');
 const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
 
 const newPkg = {
-  name: '9router-cli',
+  name: 'voidRoute-cli',
   version: '1.0.0',
   type: 'module',
   main: 'index.js',
@@ -170,7 +170,7 @@ import { getSettings } from './src/lib/localDb.js';
 
 export async function setupCLI(port) {
   console.clear();
-  console.log(chalk.blue.bold('🚀 9Router CLI Edition'));
+  console.log(chalk.blue.bold('🚀 voidRoute CLI Edition'));
   console.log(chalk.gray(\`Proxy Server running at http://localhost:\${port}/v1\`));
   
   while(true) {
