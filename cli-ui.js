@@ -1070,6 +1070,14 @@ export async function manageCliTools(port) {
       }
     }
 
+    let defaultModelForTool = selectedModel;
+    const allCombosForDefault = await getCombos();
+    const sCombo = allCombosForDefault.find(c => c.name === selectedModel);
+    if (sCombo && sCombo.models && sCombo.models.length > 0) {
+      const firstM = sCombo.models[0];
+      defaultModelForTool = firstM.provider ? `${getProviderAlias(firstM.provider)}/${firstM.model}` : firstM.model;
+    }
+
     // ──── CLAUDE CODE ────────────────────────────────────────────────────
     if (tool === 'claude') {
       const settingsPath = path.join(os.homedir(), '.claude', 'settings.json');
@@ -1142,13 +1150,11 @@ export async function manageCliTools(port) {
         const selectedCombo = allCombos.find(c => c.name === selectedModel);
 
         if (selectedCombo) {
-          ocModels[selectedModel] = { name: `Combo: ${selectedModel}`, modalities: { input: ["text", "image"], output: ["text"] } };
           for (const m of selectedCombo.models) {
             const mId = m.provider ? `${getProviderAlias(m.provider)}/${m.model}` : m.model;
-            // Best effort friendly name since we don't do an API call to all providers here to save time
-            const friendlyName = `${m.model} (${m.provider})`;
             ocModels[mId] = { name: mId, modalities: { input: ["text", "image"], output: ["text"] } };
           }
+          selectedModel = defaultModelForTool;
         } else {
           ocModels[selectedModel] = { name: selectedModel, modalities: { input: ["text", "image"], output: ["text"] } };
         }
@@ -1236,8 +1242,12 @@ export async function manageCliTools(port) {
         try {
           let conf = fs.existsSync(aiderPath) ? fs.readFileSync(aiderPath, 'utf8') : '';
           conf = conf.replace(/^openai-api-base:.*$/gm, '').replace(/^openai-api-key:.*$/gm, '').replace(/^model:.*$/gm, '').trim();
-          conf += `\n\nopenai-api-base: ${endpoint}\nopenai-api-key: sk_voidRoute\nmodel: openai/${selectedModel}`;
-          fs.writeFileSync(aiderPath, conf.trim() + '\n');
+          const yamlContent = `
+openai-api-key: sk_voidRoute
+openai-api-base: ${endpoint}
+model: openai/${defaultModelForTool}
+`;
+          fs.writeFileSync(aiderPath, conf.trim() + yamlContent + '\n');
           console.log(chalk.green(`  ✅ Successfully updated ${aiderPath}`));
         } catch (e) { console.log(chalk.red(`  ❌ Failed to write config: ${e.message}`)); }
       }
@@ -1282,14 +1292,13 @@ export async function manageCliTools(port) {
           const selectedComboPi = allCombosForPi.find(c => c.name === selectedModel);
 
           if (selectedComboPi) {
-            piModels.push({ id: selectedModel, name: `Combo: ${selectedModel}` });
             for (const m of selectedComboPi.models) {
               const mId = m.provider ? `${getProviderAlias(m.provider)}/${m.model}` : m.model;
-              const friendlyName = `${m.model} (${m.provider})`;
               if (!piModels.find(x => x.id === mId)) {
                 piModels.push({ id: mId, name: mId });
               }
             }
+            selectedModel = defaultModelForTool;
           } else {
             piModels.push({ id: selectedModel, name: selectedModel });
           }

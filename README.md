@@ -1,4 +1,4 @@
-#  VoidRoute
+# voidRoute
 
 ![voidRoute CLI Menu](assets/screenshot.png)
 
@@ -6,14 +6,13 @@ voidRoute is a terminal-based CLI aggregator and local router for AI provider AP
 
 ---
 
-## 🎨 Inspiration
-This project uses the database schema, token rotation, and SSE proxy backend from the open-source **[voidRoute](https://github.com/decolua/voidRoute)** server. It wraps these services in a command-line interface.
+## Inspiration
+This project uses the database schema, token rotation, and SSE proxy backend from the open-source **[9router](https://github.com/decolua/9router)** server. It wraps these services in a command-line interface.
 
 ---
 
-## 🚀 Features
+## Features
 
-* **Side-by-Side ASCII Art**: Shows the galaxy and logo graphics scaled to fit standard terminal windows on startup.
 * **Dynamic Model Listing**: Queries `/v1/models` from active providers (OpenAI, Gemini, DeepSeek, OpenRouter, Mistral, Ollama) on selection. Falls back to a local registry if the provider is offline.
 * **Documentation References**: Displays clickable links to official model docs during configuration.
 * **Fallback Combos**: Create ordered fallback lists (combos) manually or generate them automatically from active providers.
@@ -28,7 +27,7 @@ This project uses the database schema, token rotation, and SSE proxy backend fro
 
 ---
 
-## 🛠️ Setup
+## Setup
 
 1. **Prerequisites**: Install [Bun](https://bun.sh/).
    ```bash
@@ -43,11 +42,11 @@ This project uses the database schema, token rotation, and SSE proxy backend fro
    bun index.js
    ```
 
-On Windows, double-click **`voidRoute.bat`** to start immediately.
+On Windows, double-click **`Start_voidRoute.bat`** to start immediately.
 
 ---
 
-## ⚙️ Operation
+## Operation
 voidRoute runs a local server on port `20130`.
 
 * **Proxy endpoint**: `http://localhost:20130/v1`
