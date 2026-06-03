@@ -6,6 +6,7 @@ import { HTTP_STATUS } from "../config/runtimeConfig.js";
 import { deriveSessionId } from "../utils/sessionManager.js";
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
 import { cleanJSONSchemaForAntigravity } from "../translator/helpers/geminiHelper.js";
+import { refreshGoogleToken } from "../services/tokenRefresh.js";
 
 // Sanitize function name: Gemini requires [a-zA-Z_][a-zA-Z0-9_.:\-]{0,63}
 function sanitizeFunctionName(name) {
@@ -111,26 +112,21 @@ export class AntigravityExecutor extends BaseExecutor {
     if (!credentials.refreshToken) return null;
 
     try {
-      const response = await proxyAwareFetch(OAUTH_ENDPOINTS.google.token, {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json" },
-        body: new URLSearchParams({
-          grant_type: "refresh_token",
-          refresh_token: credentials.refreshToken,
-          client_id: this.config.clientId,
-          client_secret: this.config.clientSecret
-        })
-      }, proxyOptions);
+      const tokens = await refreshGoogleToken(
+        credentials.refreshToken,
+        this.config.clientId,
+        this.config.clientSecret,
+        log
+      );
 
-      if (!response.ok) return null;
+      if (!tokens) return null;
 
-      const tokens = await response.json();
       log?.info?.("TOKEN", "Antigravity refreshed");
 
       return {
-        accessToken: tokens.access_token,
-        refreshToken: tokens.refresh_token || credentials.refreshToken,
-        expiresIn: tokens.expires_in,
+        accessToken: tokens.accessToken,
+        refreshToken: tokens.refreshToken || credentials.refreshToken,
+        expiresIn: tokens.expiresIn,
         projectId: credentials.projectId
       };
     } catch (error) {

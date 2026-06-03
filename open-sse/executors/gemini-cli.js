@@ -1,6 +1,7 @@
 import { BaseExecutor } from "./base.js";
 import { PROVIDERS } from "../config/providers.js";
 import { OAUTH_ENDPOINTS, GEMINI_CLI_API_CLIENT, geminiCLIUserAgent } from "../config/appConstants.js";
+import { refreshGoogleToken } from "../services/tokenRefresh.js";
 
 export class GeminiCLIExecutor extends BaseExecutor {
   constructor() {
@@ -57,26 +58,21 @@ export class GeminiCLIExecutor extends BaseExecutor {
     if (!credentials.refreshToken) return null;
 
     try {
-      const response = await fetch(OAUTH_ENDPOINTS.google.token, {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json" },
-        body: new URLSearchParams({
-          grant_type: "refresh_token",
-          refresh_token: credentials.refreshToken,
-          client_id: this.config.clientId,
-          client_secret: this.config.clientSecret
-        })
-      });
+      const tokens = await refreshGoogleToken(
+        credentials.refreshToken,
+        this.config.clientId,
+        this.config.clientSecret,
+        log
+      );
 
-      if (!response.ok) return null;
+      if (!tokens) return null;
 
-      const tokens = await response.json();
       log?.info?.("TOKEN", "Gemini CLI refreshed");
 
       return {
-        accessToken: tokens.access_token,
-        refreshToken: tokens.refresh_token || credentials.refreshToken,
-        expiresIn: tokens.expires_in,
+        accessToken: tokens.accessToken,
+        refreshToken: tokens.refreshToken || credentials.refreshToken,
+        expiresIn: tokens.expiresIn,
         projectId: credentials.projectId
       };
     } catch (error) {

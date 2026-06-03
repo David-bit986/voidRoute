@@ -208,7 +208,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   // Handle 401/403 - try token refresh (skip for noAuth providers)
   if (!executor.noAuth && (providerResponse.status === HTTP_STATUS.UNAUTHORIZED || providerResponse.status === HTTP_STATUS.FORBIDDEN)) {
     try {
-      const newCredentials = await refreshWithRetry(() => executor.refreshCredentials(credentials, log), 3, log);
+      const newCredentials = await refreshWithRetry(() => executor.refreshCredentials(credentials, log, proxyOptions), 3, log);
       if (newCredentials?.accessToken || newCredentials?.copilotToken) {
         log?.info?.("TOKEN", `${provider.toUpperCase()} | refreshed`);
         Object.assign(credentials, newCredentials);
@@ -218,6 +218,13 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
         try {
           const retryResult = await executor.execute({ model, body: translatedBody, stream, credentials, signal: streamController.signal, log, proxyOptions });
           if (retryResult.response.ok) { providerResponse = retryResult.response; providerUrl = retryResult.url; }
+          else {
+            // If retry also fails with 401, surface the projectId status for antigravity/gemini-cli
+            if ((provider === "antigravity" || provider === "gemini-cli") && retryResult.response.status === HTTP_STATUS.UNAUTHORIZED) {
+              const isRealProject = credentials?.projectId && !credentials.projectId.match(/^(useful|bright|swift|calm|bold)-(fuze|wave|spark|flow|core)-[a-z0-9]+$/);
+              log?.warn?.("AUTH", `${provider.toUpperCase()} | 401 persists after token refresh${isRealProject ? '' : ' — project ID may be invalid (auto-generated). Try reconnecting the account via the CLI setup.'}`);
+            }
+          }
         } catch { log?.warn?.("TOKEN", `${provider.toUpperCase()} | retry after refresh failed`); }
       } else {
         log?.warn?.("TOKEN", `${provider.toUpperCase()} | refresh failed`);

@@ -565,6 +565,7 @@ export async function setupCLI(port) {
       choices: [
         { name: '🌐  Manage Providers', value: 'providers' },
         { name: '🛠️   CLI Tools Config', value: 'cli_tools' },
+        { name: '📋  List Available Models', value: 'models' },
         { name: '⚙️   Settings',         value: 'settings' },
         { name: '📊  Server Status',    value: 'status' },
         { name: '❌  Exit',             value: 'exit' },
@@ -601,6 +602,11 @@ export async function setupCLI(port) {
     // ─── CLI TOOLS CONFIG ─────────────────────────────────────────────────
     if (action === 'cli_tools') {
       await manageCliTools(port);
+    }
+
+    // ─── LIST MODELS ──────────────────────────────────────────────────────
+    if (action === 'models') {
+      await listModels(port);
     }
 
     // ─── SETTINGS ─────────────────────────────────────────────────────────
@@ -956,6 +962,60 @@ async function manageSettings() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+//  LIST AVAILABLE MODELS
+// ═══════════════════════════════════════════════════════════════════════════
+async function listModels(port) {
+  console.log(chalk.cyan('\n  ── Available Models ──\n'));
+  
+  const conns = await getProviderConnections({ isActive: true });
+  if (conns.length === 0) {
+    console.log(chalk.gray('  No active provider connections. Add providers first.\n'));
+    return;
+  }
+
+  const byProvider = {};
+  for (const c of conns) {
+    if (!byProvider[c.provider]) byProvider[c.provider] = c;
+  }
+
+  for (const [provider, conn] of Object.entries(byProvider).sort()) {
+    const sp = spin(`Fetching ${provider} models...`).start();
+    const fetchedModels = await fetchProviderModels(provider, conn);
+    sp.stop();
+
+    const alias = getProviderAlias ? getProviderAlias(provider) : null;
+    const aliasStr = alias ? ` [${alias}/]` : '';
+    
+    if (fetchedModels.length > 0) {
+      console.log(chalk.white.bold(`  ${provider}${aliasStr}`) + chalk.dim(` (${fetchedModels.length} models live)`));
+      for (const m of fetchedModels.slice(0, 50)) {
+        const fullId = alias ? `${alias}/${m.id}` : m.id;
+        const displayName = m.name && m.name !== m.id ? chalk.dim(` — ${m.name}`) : '';
+        console.log(chalk.gray(`    • ${fullId}${displayName}`));
+      }
+      if (fetchedModels.length > 50) {
+        console.log(chalk.dim(`    ... and ${fetchedModels.length - 50} more`));
+      }
+    } else {
+      const list = PROVIDER_MODELS[alias] || PROVIDER_MODELS[provider];
+      if (list && list.length > 0) {
+        console.log(chalk.white.bold(`  ${provider}${aliasStr}`) + chalk.dim(` (${list.length} static)`));
+        for (const m of list) {
+          const fullId = alias ? `${alias}/${m.id || m}` : (m.id || m);
+          const displayName = m.name ? chalk.dim(` — ${m.name}`) : '';
+          console.log(chalk.gray(`    • ${fullId}${displayName}`));
+        }
+      } else {
+        console.log(chalk.red(`  ${provider} — no models available`));
+      }
+    }
+    console.log('');
+  }
+  
+  console.log(chalk.dim('  Use these model IDs with your client. E.g., model: "ag/gemini-3.5-flash"\n'));
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 //  CLI TOOLS CONFIGURATIONS
 // ═══════════════════════════════════════════════════════════════════════════
 export async function manageCliTools(port) {
@@ -965,42 +1025,84 @@ export async function manageCliTools(port) {
   // Helper: detect if a tool already has voidRoute config
   function detectStatus(tool) {
     try {
-      if (tool === 'claude') {
-        const sp = path.join(os.homedir(), '.claude', 'settings.json');
-        if (!fs.existsSync(sp)) return null;
-        const s = JSON.parse(fs.readFileSync(sp, 'utf8'));
+      if (tool === 'claude' || tool === 'openclaude') {
+        const paths = resolveConfigPath(tool);
+        const found = paths.find(p => fs.existsSync(p));
+        if (!found) return null;
+        const s = JSON.parse(fs.readFileSync(found, 'utf8'));
         return s?.env?.ANTHROPIC_BASE_URL?.includes('localhost') ? 'connected' : null;
       }
       if (tool === 'opencode') {
-        const op = path.join(os.homedir(), '.config', 'opencode', 'opencode.json');
-        if (!fs.existsSync(op)) return null;
-        const s = JSON.parse(fs.readFileSync(op, 'utf8'));
+        const paths = resolveConfigPath('opencode');
+        const found = paths.find(p => fs.existsSync(p));
+        if (!found) return null;
+        const s = JSON.parse(fs.readFileSync(found, 'utf8'));
         return s?.provider?.['voidRoute'] ? 'connected' : null;
       }
       if (tool === 'codex') {
-        const cp = path.join(os.homedir(), '.codex', 'config.toml');
-        if (!fs.existsSync(cp)) return null;
-        return fs.readFileSync(cp, 'utf8').includes('voidRoute') ? 'connected' : null;
+        const paths = resolveConfigPath('codex');
+        const found = paths.find(p => fs.existsSync(p));
+        if (!found) return null;
+        return fs.readFileSync(found, 'utf8').includes('voidRoute') ? 'connected' : null;
       }
       if (tool === 'aider') {
-        const ap = path.join(os.homedir(), '.aider.conf.yml');
-        if (!fs.existsSync(ap)) return null;
-        return fs.readFileSync(ap, 'utf8').includes('localhost') ? 'connected' : null;
+        const paths = resolveConfigPath('aider');
+        const found = paths.find(p => fs.existsSync(p));
+        if (!found) return null;
+        return fs.readFileSync(found, 'utf8').includes('localhost') ? 'connected' : null;
       }
       if (tool === 'pi') {
-        const mp = path.join(os.homedir(), '.pi', 'agent', 'models.json');
-        if (!fs.existsSync(mp)) return null;
-        const s = JSON.parse(fs.readFileSync(mp, 'utf8'));
+        const paths = resolveConfigPath('pi');
+        const found = paths.find(p => fs.existsSync(p));
+        if (!found) return null;
+        const s = JSON.parse(fs.readFileSync(found, 'utf8'));
         return s?.providers?.['voidRoute'] ? 'connected' : null;
       }
       if (tool === 'cline') {
-        const gp = path.join(os.homedir(), '.cline', 'data', 'globalState.json');
-        if (!fs.existsSync(gp)) return null;
-        const s = JSON.parse(fs.readFileSync(gp, 'utf8'));
+        const paths = resolveConfigPath('cline');
+        const found = paths.find(p => fs.existsSync(p));
+        if (!found) return null;
+        const s = JSON.parse(fs.readFileSync(found, 'utf8'));
         return (s?.actModeApiProvider === 'openai' && s?.openAiBaseUrl?.includes('localhost')) ? 'connected' : null;
       }
     } catch (e) { }
     return null;
+  }
+
+  // Config path resolver: tries multiple known paths for tools installed elsewhere
+  function resolveConfigPath(tool) {
+    const home = os.homedir();
+    switch (tool) {
+      case 'claude':
+      case 'openclaude': return [
+        path.join(home, '.claude', 'settings.json'),
+        path.join(home, '.openclaude', 'settings.json'),
+      ];
+      case 'opencode': return [
+        path.join(home, '.config', 'opencode', 'opencode.json'),
+        path.join(home, '.config', 'opencode-profiles', 'default', 'opencode.json'),
+      ];
+      case 'codex': return [
+        path.join(home, '.codex', 'config.toml'),
+      ];
+      case 'aider': return [
+        path.join(home, '.aider.conf.yml'),
+        path.join(home, '.config', 'aider', 'aider.conf.yml'),
+      ];
+      case 'pi': return [
+        path.join(home, '.pi', 'agent', 'models.json'),
+      ];
+      case 'cline': return [
+        path.join(home, '.cline', 'data', 'globalState.json'),
+      ];
+      default: return [];
+    }
+  }
+
+  function getConfigPath(tool) {
+    const paths = resolveConfigPath(tool);
+    const found = paths.find(p => fs.existsSync(path.dirname(p)));
+    return found || paths[0];
   }
   
   function label(tool, name) {
@@ -1013,6 +1115,7 @@ export async function manageCliTools(port) {
       type: 'list', name: 'tool', message: 'Select CLI Tool to configure:',
       choices: [
         { name: label('claude', 'Claude Code'), value: 'claude' },
+        { name: label('openclaude', 'OpenClaude'), value: 'openclaude' },
         { name: label('opencode', 'OpenCode'), value: 'opencode' },
         { name: label('codex', 'OpenAI Codex'), value: 'codex' },
         { name: label('aider', 'Aider'), value: 'aider' },
@@ -1046,98 +1149,215 @@ export async function manageCliTools(port) {
 
     // Ask for target model if applying and not manual
     let selectedModel = 'ag/gemini-2.5-pro';
+    let defaultModelForTool = 'ag/gemini-2.5-pro';
+    let providerModelsList = [];
+    let allModelsForProvider = null;
+    let allModelsForPi = true; // Pi Agent registers all by default
+    
     if (action === 'apply' && tool !== 'manual') {
-      const combos = await getCombos();
-      const choices = combos.map(c => ({ name: `Combo: ${c.name}`, value: c.name }));
-      if (choices.length > 0) choices.push(new inquirer.Separator());
-      choices.push({ name: '✍️  Type a custom model name (e.g. ag/gemini-2.5-pro)', value: 'custom' });
-      choices.push({ name: 'Default (ag/gemini-2.5-pro)', value: 'ag/gemini-2.5-pro' });
-
-      const { modelSelection } = await inquirer.prompt([{
-        type: 'list', name: 'modelSelection',
-        message: `Select the default model/combo to use for ${tool}:`,
-        choices
+      const connections = await getProviderConnections();
+      if (connections.length === 0) {
+        console.log(chalk.red('  ❌ No providers added yet. Please add a provider first.'));
+        continue;
+      }
+      
+      const providerChoices = connections.map(c => ({ name: `${c.provider} (${c.name || 'Account'})`, value: c.id }));
+      const { selectedConnId } = await inquirer.prompt([{
+        type: 'list', name: 'selectedConnId',
+        message: `Which provider do you want to use for ${tool}?`,
+        choices: providerChoices
       }]);
-
-      if (modelSelection === 'custom') {
-        const { customModel } = await inquirer.prompt([{
-          type: 'input', name: 'customModel', message: 'Enter model name:'
-        }]);
-        selectedModel = customModel || selectedModel;
+      
+      const conn = connections.find(c => c.id === selectedConnId);
+      
+      // Dynamic model fetching with static fallback
+      const sp = spin(`Fetching latest models from ${conn.provider}...`).start();
+      const fetchedModels = await fetchProviderModels(conn.provider, conn);
+      sp.stop();
+      
+      let modelsForThisProvider = [];
+      const { PROVIDER_MODELS } = await import('./open-sse/config/providerModels.js');
+      
+      if (fetchedModels.length > 0) {
+        const alias = getProviderAlias(conn.provider);
+        const staticList = PROVIDER_MODELS[alias] || PROVIDER_MODELS[conn.provider];
+        modelsForThisProvider = fetchedModels
+          .filter(m => !m.type || m.type === 'llm')
+          .map(m => {
+            const displayName = staticList
+              ? staticList.find(sm => sm.id === m.id)?.name
+              : null;
+            const fullId = alias ? `${alias}/${m.id}` : m.id;
+            return { id: fullId, name: displayName || m.name || m.id };
+          });
+        console.log(chalk.cyan(`  ✨ Loaded ${modelsForThisProvider.length} models from ${conn.provider} API`));
       } else {
-        selectedModel = modelSelection;
+        // Fallback to static model list
+        const alias = getProviderAlias(conn.provider);
+        const list = PROVIDER_MODELS[alias] || PROVIDER_MODELS[conn.provider];
+        if (list) {
+          for (const m of list) {
+            const fullId = alias ? `${alias}/${m.id || m}` : (m.id || m);
+            modelsForThisProvider.push({ id: fullId, name: m.name || fullId });
+          }
+        }
+        console.log(chalk.gray(`  ℹ️  Using static model list (${modelsForThisProvider.length} models)`));
+      }
+
+      providerModelsList = modelsForThisProvider;
+      
+      // Build model choices — always include manual entry option
+      const modelChoices = [
+        ...modelsForThisProvider.map(m => ({ 
+          name: m.name && m.name !== m.id ? `${m.id} — ${m.name}` : m.id, 
+          value: m.id 
+        })),
+        new inquirer.Separator(),
+        { name: '🖊️  Enter custom model manually...', value: '__custom__' },
+      ];
+      
+      const { chosenModel } = await inquirer.prompt([{
+        type: 'list', name: 'chosenModel',
+        message: `Select the default model to use for ${tool}:`,
+        choices: modelChoices,
+        pageSize: 15,
+      }]);
+      
+      if (chosenModel === '__custom__') {
+        const { customModel } = await inquirer.prompt([{
+          type: 'input', name: 'customModel', 
+          message: 'Enter model ID (e.g., ag/gemini-2.5-pro or openai/gpt-4o):'
+        }]);
+        selectedModel = customModel;
+      } else {
+        selectedModel = chosenModel;
+      }
+      
+      defaultModelForTool = selectedModel;
+
+      // OpenCode & Pi Agent: offer to register ALL models from the provider
+      if (chosenModel !== '__custom__' && providerModelsList.length > 1) {
+        if (tool === 'opencode') {
+          const { useAll } = await inquirer.prompt([{
+            type: 'confirm', name: 'useAll',
+            message: `Register ALL ${providerModelsList.length} models from this provider? (OpenCode supports multi-model configs)`,
+            default: false,
+          }]);
+          if (useAll) {
+            allModelsForProvider = providerModelsList.map(m => m.id);
+            defaultModelForTool = providerModelsList[0]?.id || selectedModel;
+          }
+        } else if (tool === 'pi') {
+          const { useAll } = await inquirer.prompt([{
+            type: 'confirm', name: 'useAll',
+            message: `Register ALL ${providerModelsList.length} models from this provider? (Pi Agent supports multi-model configs)`,
+            default: true,
+          }]);
+          allModelsForPi = useAll;
+        }
       }
     }
 
-    let defaultModelForTool = selectedModel;
-    const allCombosForDefault = await getCombos();
-    const sCombo = allCombosForDefault.find(c => c.name === selectedModel);
-    if (sCombo && sCombo.models && sCombo.models.length > 0) {
-      const firstM = sCombo.models[0];
-      defaultModelForTool = firstM.provider ? `${getProviderAlias(firstM.provider)}/${firstM.model}` : firstM.model;
-    }
-
-    // ──── CLAUDE CODE ────────────────────────────────────────────────────
-    if (tool === 'claude') {
-      const settingsPath = path.join(os.homedir(), '.claude', 'settings.json');
-      const claudeDir = path.dirname(settingsPath);
+    // ──── CLAUDE CODE & OPENCLAUDE ─────────────────────────────────────────
+    if (tool === 'claude' || tool === 'openclaude') {
+      const configPath = getConfigPath(tool);
+      const configDir = path.dirname(configPath);
+      const isOpenClaude = tool === 'openclaude';
+      const displayName = isOpenClaude ? 'OpenClaude' : 'Claude Code';
+      const allConfPaths = resolveConfigPath(tool).join('\n     or ');
+      
+      // Check if the selected model has a provider prefix (e.g. "ag/gemini-3.5-flash")
+      const hasProviderPrefix = selectedModel.includes('/');
       
       if (action === 'reset') {
         try {
-          if (fs.existsSync(settingsPath)) {
-            let s = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
-            if (s.env) {
-              delete s.env.ANTHROPIC_BASE_URL;
-              delete s.env.ANTHROPIC_AUTH_TOKEN;
-              delete s.env.ANTHROPIC_DEFAULT_OPUS_MODEL;
-              delete s.env.ANTHROPIC_DEFAULT_SONNET_MODEL;
-              delete s.env.ANTHROPIC_DEFAULT_HAIKU_MODEL;
-              delete s.env.API_TIMEOUT_MS;
-              if (Object.keys(s.env).length === 0) delete s.env;
+          // Reset all possible config paths
+          for (const p of resolveConfigPath(tool)) {
+            if (fs.existsSync(p)) {
+              let s = JSON.parse(fs.readFileSync(p, 'utf8'));
+              if (s.env) {
+                delete s.env.ANTHROPIC_BASE_URL;
+                delete s.env.ANTHROPIC_AUTH_TOKEN;
+                delete s.env.ANTHROPIC_DEFAULT_OPUS_MODEL;
+                delete s.env.ANTHROPIC_DEFAULT_SONNET_MODEL;
+                delete s.env.ANTHROPIC_DEFAULT_HAIKU_MODEL;
+                delete s.env.ANTHROPIC_MODEL;
+                delete s.env.API_TIMEOUT_MS;
+                if (isOpenClaude) {
+                  delete s.env.OPENAI_API_KEY;
+                  delete s.env.OPENAI_BASE_URL;
+                  delete s.env.OPENAI_MODEL;
+                  delete s.env.CLAUDE_CODE_USE_OPENAI;
+                }
+                if (Object.keys(s.env).length === 0) delete s.env;
+              }
+              fs.writeFileSync(p, JSON.stringify(s, null, 2));
             }
-            fs.writeFileSync(settingsPath, JSON.stringify(s, null, 2));
-            console.log(chalk.green(`  ✅ voidRoute config removed from Claude Code.`));
-          } else {
-            console.log(chalk.gray('  No settings file found.'));
           }
+          console.log(chalk.green(`  ✅ voidRoute config removed from ${displayName}.`));
         } catch (e) { console.log(chalk.red(`  ❌ ${e.message}`)); }
       } else {
         let currentSettings = {};
-        try { if (fs.existsSync(settingsPath)) currentSettings = JSON.parse(fs.readFileSync(settingsPath, 'utf8')); } catch (e) { }
+        const existingPath = resolveConfigPath(tool).find(p => fs.existsSync(p));
+        const writePath = existingPath || configPath;
+        try { if (fs.existsSync(writePath)) currentSettings = JSON.parse(fs.readFileSync(writePath, 'utf8')); } catch (e) { }
         currentSettings.hasCompletedOnboarding = true;
         if (!currentSettings.env) currentSettings.env = {};
-        currentSettings.env.ANTHROPIC_BASE_URL = endpointNoV1;
-        currentSettings.env.ANTHROPIC_AUTH_TOKEN = "sk_voidRoute";
-        currentSettings.env.ANTHROPIC_DEFAULT_OPUS_MODEL = selectedModel;
-        currentSettings.env.ANTHROPIC_DEFAULT_SONNET_MODEL = selectedModel;
-        currentSettings.env.ANTHROPIC_DEFAULT_HAIKU_MODEL = selectedModel;
-        try {
-          if (!fs.existsSync(claudeDir)) fs.mkdirSync(claudeDir, { recursive: true });
-          fs.writeFileSync(settingsPath, JSON.stringify(currentSettings, null, 2));
-          console.log(chalk.green(`  ✅ Successfully updated ${settingsPath}`));
-        } catch (e) { console.log(chalk.red(`  ❌ Failed to write config: ${e.message}`)); }
+        
+        if (isOpenClaude && hasProviderPrefix) {
+          // OpenClaude with provider-prefixed model → use OpenAI-compatible routing
+          currentSettings.env.CLAUDE_CODE_USE_OPENAI = '1';
+          currentSettings.env.OPENAI_BASE_URL = endpoint;
+          currentSettings.env.OPENAI_MODEL = selectedModel;
+          currentSettings.env.OPENAI_API_KEY = 'sk_voidRoute';
+          if (!fs.existsSync(configDir)) fs.mkdirSync(configDir, { recursive: true });
+          fs.writeFileSync(writePath, JSON.stringify(currentSettings, null, 2));
+          console.log(chalk.green(`  ✅ ${displayName} configured via OpenAI-compatible mode`));
+          console.log(chalk.gray(`     Config: ${writePath}`));
+          console.log(chalk.gray(`     Model: ${selectedModel}`));
+          console.log(chalk.dim(`     (Other possible paths: ${allConfPaths})`));
+        } else {
+          // Anthropic API mode (works for both Claude and OpenClaude)
+          currentSettings.env.ANTHROPIC_BASE_URL = endpointNoV1;
+          currentSettings.env.ANTHROPIC_AUTH_TOKEN = "sk_voidRoute";
+          currentSettings.env.ANTHROPIC_DEFAULT_OPUS_MODEL = selectedModel;
+          currentSettings.env.ANTHROPIC_DEFAULT_SONNET_MODEL = selectedModel;
+          currentSettings.env.ANTHROPIC_DEFAULT_HAIKU_MODEL = selectedModel;
+          currentSettings.env.ANTHROPIC_MODEL = selectedModel;
+          if (!fs.existsSync(configDir)) fs.mkdirSync(configDir, { recursive: true });
+          fs.writeFileSync(writePath, JSON.stringify(currentSettings, null, 2));
+          console.log(chalk.green(`  ✅ ${displayName} configured via Anthropic API mode`));
+          console.log(chalk.gray(`     Config: ${writePath}`));
+          console.log(chalk.gray(`     Model: ${selectedModel}`));
+          console.log(chalk.dim(`     (Other possible paths: ${allConfPaths})`));
+          if (hasProviderPrefix && tool === 'claude') {
+            console.log(chalk.yellow(`  ⚠️  Note: Claude Code's Anthropic API mode may not support non-Anthropic models.`));
+            console.log(chalk.yellow(`  ⚠️  Use OpenClaude instead for cross-provider model routing.`));
+          }
+        }
       }
     }
     // ──── OPENCODE ────────────────────────────────────────────────────────
     else if (tool === 'opencode') {
-      const ocDir = path.join(os.homedir(), '.config', 'opencode');
-      const ocPath = path.join(ocDir, 'opencode.json');
-      
+      const ocConfigPath = getConfigPath(tool);
+      const ocDir = path.dirname(ocConfigPath);
+      const ocPath = ocConfigPath;
+
       if (action === 'reset') {
         try {
-          if (fs.existsSync(ocPath)) {
-            let s = JSON.parse(fs.readFileSync(ocPath, 'utf8'));
-            if (s.provider) delete s.provider['voidRoute'];
-            if (s.model?.startsWith('voidRoute/')) delete s.model;
-            if (s.agent?.explorer?.model?.startsWith('voidRoute/')) {
-              delete s.agent.explorer;
-              if (Object.keys(s.agent).length === 0) delete s.agent;
+          for (const p of resolveConfigPath(tool)) {
+            if (fs.existsSync(p)) {
+              let s = JSON.parse(fs.readFileSync(p, 'utf8'));
+              if (s.provider) delete s.provider['voidRoute'];
+              if (s.model?.startsWith('voidRoute/')) delete s.model;
+              if (s.agent?.explorer?.model?.startsWith('voidRoute/')) {
+                delete s.agent.explorer;
+                if (Object.keys(s.agent).length === 0) delete s.agent;
+              }
+              fs.writeFileSync(p, JSON.stringify(s, null, 2));
             }
-            fs.writeFileSync(ocPath, JSON.stringify(s, null, 2));
-            console.log(chalk.green(`  ✅ voidRoute config removed from OpenCode.`));
-          } else {
-            console.log(chalk.gray('  No config file found.'));
           }
+          console.log(chalk.green(`  ✅ voidRoute config removed from OpenCode.`));
         } catch (e) { console.log(chalk.red(`  ❌ ${e.message}`)); }
       } else {
         let ocSettings = {};
@@ -1145,17 +1365,31 @@ export async function manageCliTools(port) {
         
         let ocModels = {};
 
-        const allCombos = await getCombos();
-        const selectedCombo = allCombos.find(c => c.name === selectedModel);
-
-        if (selectedCombo) {
-          for (const m of selectedCombo.models) {
-            const mId = m.provider ? `${getProviderAlias(m.provider)}/${m.model}` : m.model;
-            ocModels[mId] = { name: mId, modalities: { input: ["text", "image"], output: ["text"] } };
+        // If user chose "all models", register every model from the provider
+        if (allModelsForProvider && allModelsForProvider.length > 0) {
+          for (const mId of allModelsForProvider) {
+            ocModels[mId] = {
+              name: mId,
+              modalities: { input: ["text", "image"], output: ["text"] }
+            };
           }
-          selectedModel = defaultModelForTool;
+          console.log(chalk.cyan(`  📦 Registered ${allModelsForProvider.length} models for OpenCode`));
         } else {
-          ocModels[selectedModel] = { name: selectedModel, modalities: { input: ["text", "image"], output: ["text"] } };
+          const allCombos = await getCombos().catch(() => []);
+          const selectedCombo = allCombos.find(c => c.name === selectedModel);
+
+          if (selectedCombo) {
+            for (const m of selectedCombo.models) {
+              const mId = m.provider ? `${getProviderAlias(m.provider)}/${m.model}` : m.model;
+              ocModels[mId] = { name: mId, modalities: { input: ["text", "image"], output: ["text"] } };
+            }
+            selectedModel = defaultModelForTool;
+          } else {
+            ocModels[selectedModel] = {
+              name: selectedModel,
+              modalities: { input: ["text", "image"], output: ["text"] }
+            };
+          }
         }
 
         if (!ocSettings.provider) ocSettings.provider = {};
@@ -1244,7 +1478,7 @@ export async function manageCliTools(port) {
           const yamlContent = `
 openai-api-key: sk_voidRoute
 openai-api-base: ${endpoint}
-model: openai/${defaultModelForTool}
+model: ${selectedModel}
 `;
           fs.writeFileSync(aiderPath, conf.trim() + yamlContent + '\n');
           console.log(chalk.green(`  ✅ Successfully updated ${aiderPath}`));
@@ -1287,17 +1521,17 @@ model: openai/${defaultModelForTool}
           
           let piModels = [];
 
-          const allCombosForPi = await getCombos();
-          const selectedComboPi = allCombosForPi.find(c => c.name === selectedModel);
-
-          if (selectedComboPi) {
-            for (const m of selectedComboPi.models) {
-              const mId = m.provider ? `${getProviderAlias(m.provider)}/${m.model}` : m.model;
-              if (!piModels.find(x => x.id === mId)) {
-                piModels.push({ id: mId, name: mId });
+          if (allModelsForPi && providerModelsList.length > 0) {
+            for (const m of providerModelsList) {
+              if (!piModels.find(x => x.id === m.id)) {
+                piModels.push({ id: m.id, name: m.name || m.id });
               }
             }
             selectedModel = defaultModelForTool;
+            console.log(chalk.cyan(`  📦 Registered ${piModels.length} models for Pi Agent`));
+          } else if (providerModelsList.length > 0) {
+            // Single model only
+            piModels.push({ id: selectedModel, name: selectedModel });
           } else {
             piModels.push({ id: selectedModel, name: selectedModel });
           }
