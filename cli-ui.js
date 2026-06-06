@@ -23,7 +23,7 @@ import {
   KILOCODE_CONFIG, CLINE_CONFIG, QWEN_CONFIG,
 } from './src/lib/oauth/constants/oauth.js';
 import { generatePKCE } from './src/lib/oauth/utils/pkce.js';
-import { getProviderAlias } from './src/shared/constants/providers.js';
+import { getProviderAlias, AI_PROVIDERS } from './src/shared/constants/providers.js';
 
 // ─── Provider Classification ────────────────────────────────────────────────
 // Providers that use OAuth / device-code flows (NOT simple API keys)
@@ -641,6 +641,7 @@ async function manageProviders(port) {
     const { pAction } = await inquirer.prompt([{
       type: 'list', name: 'pAction', message: 'Provider Options:',
       choices: [
+        { name: '📋 List / Search Available Providers',                                value: 'list' },
         { name: '🔐 Add OAuth Provider (GitHub, Claude, Kiro, Gemini, Antigravity...)', value: 'add_oauth' },
         { name: '🔑 Add API Key Provider (Search by name)',                             value: 'add_apikey' },
         { name: '🔧 Add Custom API (OpenAI-compatible, name it yourself)',               value: 'add_custom' },
@@ -650,6 +651,45 @@ async function manageProviders(port) {
     }]);
 
     if (pAction === 'back') return;
+
+    if (pAction === 'list') {
+      const providerEntries = Object.entries(AI_PROVIDERS).filter(([, p]) => !p.hidden);
+      let searchTerm = '';
+      while (true) {
+        const { search } = await inquirer.prompt([{
+          type: 'input', name: 'search',
+          message: 'Search providers (partial name, or empty to show all):',
+        }]);
+        searchTerm = search.toLowerCase().trim();
+        let results = providerEntries.filter(([id, p]) =>
+          !searchTerm || p.id.toLowerCase().includes(searchTerm) || p.name.toLowerCase().includes(searchTerm)
+        );
+
+        if (results.length === 0) {
+          console.log(chalk.red(`\n  No providers matching "${search}". Try again.\n`));
+          continue;
+        }
+
+        console.log(chalk.cyan(`\n  ── Available Providers ${searchTerm ? `matching "${search}"` : ''} (${results.length}) ──\n`));
+
+        const isConnected = (id) => conns.some(c => c.provider === id);
+        const authLabel = (p) => {
+          if (p.noAuth) return chalk.gray('no-auth');
+          if (p.authType === 'cookie') return chalk.magenta('cookie');
+          if (OAUTH_PROVIDERS[p.id] || p.authModes?.includes('oauth')) return chalk.magenta('oauth/apikey');
+          if (p.deprecated) return chalk.red('deprecated');
+          return chalk.yellow('apikey');
+        };
+
+        for (const [id, p] of results) {
+          const connected = isConnected(id) ? chalk.green(' ●') : chalk.gray(' ○');
+          const alias = p.alias ? chalk.dim(` [${p.alias}/]`) : '';
+          console.log(`  ${connected} ${chalk.white.bold(p.name)}${alias} ${chalk.dim(`(${id})`)}  ${authLabel(p)}`);
+        }
+        console.log('');
+        break;
+      }
+    }
 
     if (pAction === 'add_oauth') {
       const oauthChoices = Object.entries(OAUTH_PROVIDERS).map(([id, def]) => {
