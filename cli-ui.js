@@ -8,8 +8,11 @@ import crypto, { randomUUID } from 'crypto';
 import {
   getSettings, updateSettings,
   getProviderConnections, createProviderConnection,
-  deleteProviderConnection, updateProviderConnection,
-  
+  deleteProviderConnection, deleteProviderConnectionsByProvider,
+  updateProviderConnection,
+  getCombos, createCombo, deleteCombo,
+  createProviderNode, deleteProviderNode,
+  addCustomModel, deleteCustomModel,
   getApiKeys, createApiKey, deleteApiKey,
 } from './src/lib/localDb.js';
 import { PROVIDERS as PROVIDER_ENDPOINTS } from './open-sse/config/providers.js';
@@ -639,7 +642,8 @@ async function manageProviders(port) {
       type: 'list', name: 'pAction', message: 'Provider Options:',
       choices: [
         { name: '🔐 Add OAuth Provider (GitHub, Claude, Kiro, Gemini, Antigravity...)', value: 'add_oauth' },
-        { name: '🔑 Add API Key Provider (OpenRouter, OpenAI, Anthropic, GLM...)',      value: 'add_apikey' },
+        { name: '🔑 Add API Key Provider (Search by name)',                             value: 'add_apikey' },
+        { name: '🔧 Add Custom API (OpenAI-compatible, name it yourself)',               value: 'add_custom' },
         { name: '🗑️  Remove a Provider',                                                 value: 'remove' },
         { name: '🔙 Back',                                                               value: 'back' },
       ],
@@ -689,12 +693,42 @@ async function manageProviders(port) {
     }
 
     if (pAction === 'add_apikey') {
-      const choices = API_KEY_PROVIDERS.map(k => {
-        const isConnected = conns.some(c => c.provider === k);
-        return { name: `${k}${isConnected ? chalk.gray(' — Already Connected') : ''}`, value: k };
-      });
-      const { providerId, connectionName, apiKey } = await inquirer.prompt([
-        { type: 'list', name: 'providerId', message: 'Select Provider:', choices, pageSize: 20 },
+      // Search-first: type to filter instead of scrolling 70+ items
+      let providerId = null;
+      while (!providerId) {
+        const { search } = await inquirer.prompt([{
+          type: 'input', name: 'search',
+          message: 'Search provider by name (partial match):',
+          validate: (v) => v.length > 0 || 'Enter a search term',
+        }]);
+        const term = search.toLowerCase().trim();
+        const matches = API_KEY_PROVIDERS.filter(k =>
+          k.toLowerCase().includes(term)
+        );
+
+        if (matches.length === 0) {
+          console.log(chalk.red(`\n  No providers matching "${search}". Try again.\n`));
+          continue;
+        }
+
+        const choices = matches.map(k => {
+          const isConnected = conns.some(c => c.provider === k);
+          return { name: `${k}${isConnected ? chalk.gray(' — Already Connected') : ''}`, value: k };
+        });
+        choices.push({ name: '🔄 Search Again', value: '__retry__' });
+
+        const { selected } = await inquirer.prompt([{
+          type: 'list', name: 'selected',
+          message: `Providers matching "${search}" (${matches.length} found):`,
+          choices,
+          pageSize: Math.min(matches.length + 1, 15),
+        }]);
+
+        if (selected === '__retry__') continue;
+        providerId = selected;
+      }
+
+      const { connectionName, apiKey } = await inquirer.prompt([
         { type: 'input', name: 'connectionName', message: 'Connection Name:', default: 'My Account' },
         { type: 'password', name: 'apiKey', message: 'API Key:', mask: '*' },
       ]);
@@ -705,6 +739,106 @@ async function manageProviders(port) {
       }
     }
 
+    if (pAction === 'add_custom') {
+      console.log(chalk.cyan('\n  ── Create Custom OpenAI-Compatible Provider ──\n'));
+      const { name } = await inquirer.prompt([{
+        type: 'input', name: 'name',
+        message: 'Provider name (used as model prefix, e.g. "my-api" → my-api/model):',
+        validate: (v) => v.length > 0 || 'Name is required',
+      }]);
+      if (!name) continue;
+
+      const { baseUrl } = await inquirer.prompt([{
+        type: 'input', name: 'baseUrl',
+        message: 'Base URL (OpenAI-compatible endpoint):',
+        default: 'https://api.example.com/v1',
+        validate: (v) => v.length > 0 || 'URL is required',
+      }]);
+
+      const { apiKey } = await inquirer.prompt([{
+        type: 'password', name: 'apiKey',
+        message: 'API Key (optional, can add/edit later):',
+        mask: '*',
+      }]);
+
+      const safeId = name.replace(/[^a-z0-9-]/gi, '-').replace(/-+/g, '-').toLowerCase();
+      const nodeId = `openai-compatible-${safeId}-${randomUUID().slice(0, 8)}`;
+
+      await createProviderNode({
+        id: nodeId,
+        type: 'openai-compatible',
+        name,
+        prefix: name,
+        apiType: 'openai',
+        baseUrl,
+      });
+
+      if (apiKey) {
+        await createProviderConnection({
+          provider: nodeId,
+          name,
+          accessToken: apiKey,
+          authType: 'apikey',
+          isActive: true,
+        });
+      }
+
+      const models = [];
+      console.log(chalk.cyan('\n  Add models one by one. Keep empty or choose finish when done.\n'));
+
+      while (true) {
+        if (models.length > 0) {
+          console.log(chalk.gray(`  Current models: ${models.join(', ')}`));
+        }
+
+        const { modelAction } = await inquirer.prompt([{
+          type: 'list', name: 'modelAction',
+          message: 'Model:',
+          choices: [
+            { name: '➕ Add Model', value: 'add' },
+            ...(models.length > 0 ? [{ name: '🗑️  Delete Last Model', value: 'delete' }] : []),
+            { name: '✅ Save & Finish', value: 'finish' },
+            { name: '❌ Cancel (discard)', value: 'cancel' },
+          ],
+        }]);
+
+        if (modelAction === 'cancel') {
+          await deleteProviderNode(nodeId);
+          await deleteProviderConnectionsByProvider(nodeId);
+          console.log(chalk.gray('  Cancelled. Provider discarded.\n'));
+          break;
+        }
+
+        if (modelAction === 'delete') {
+          const removed = models.pop();
+          console.log(chalk.yellow(`  🗑️  Removed: ${removed}\n`));
+          continue;
+        }
+
+        if (modelAction === 'finish') {
+          for (const modelId of models) {
+            await addCustomModel({
+              providerAlias: name,
+              id: modelId,
+              type: 'llm',
+              name: modelId,
+            });
+          }
+          console.log(chalk.green(`\n  ✅ Custom provider "${name}" created!`));
+          console.log(chalk.gray(`     Provider ID: ${nodeId}`));
+          console.log(chalk.gray(`     Models: ${models.join(', ') || '(none)'}\n`));
+          break;
+        }
+
+        const { modelId } = await inquirer.prompt([{
+          type: 'input', name: 'modelId',
+          message: 'Model ID (e.g. gpt-4o):',
+          validate: (v) => v.length > 0 || 'Enter a model ID',
+        }]);
+        models.push(modelId.trim());
+        console.log(chalk.green(`  ✅ Added: ${modelId.trim()}\n`));
+      }
+    }
     if (pAction === 'remove') {
       const conns = await getProviderConnections();
       if (conns.length === 0) { console.log(chalk.gray('  No providers to remove.')); continue; }
