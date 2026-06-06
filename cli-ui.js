@@ -1,4 +1,5 @@
 import inquirer from 'inquirer';
+import search from '@inquirer/search';
 import chalk from 'chalk';
 import http from 'http';
 import fs from 'fs';
@@ -733,40 +734,23 @@ async function manageProviders(port) {
     }
 
     if (pAction === 'add_apikey') {
-      // Search-first: type to filter instead of scrolling 70+ items
-      let providerId = null;
-      while (!providerId) {
-        const { search } = await inquirer.prompt([{
-          type: 'input', name: 'search',
-          message: 'Search provider by name (partial match):',
-          validate: (v) => v.length > 0 || 'Enter a search term',
-        }]);
-        const term = search.toLowerCase().trim();
-        const matches = API_KEY_PROVIDERS.filter(k =>
-          k.toLowerCase().includes(term)
-        );
+      const providerChoices = API_KEY_PROVIDERS.map(k => ({
+        name: k,
+        value: k,
+        description: conns.some(c => c.provider === k) ? 'Already connected' : undefined,
+      }));
 
-        if (matches.length === 0) {
-          console.log(chalk.red(`\n  No providers matching "${search}". Try again.\n`));
-          continue;
-        }
+      const providerId = await search({
+        message: 'Search and select a provider:',
+        source: async (term, { signal }) => {
+          if (!term) return providerChoices;
+          const t = term.toLowerCase();
+          return providerChoices.filter(c => c.name.toLowerCase().includes(t));
+        },
+        pageSize: 10,
+      });
 
-        const choices = matches.map(k => {
-          const isConnected = conns.some(c => c.provider === k);
-          return { name: `${k}${isConnected ? chalk.gray(' — Already Connected') : ''}`, value: k };
-        });
-        choices.push({ name: '🔄 Search Again', value: '__retry__' });
-
-        const { selected } = await inquirer.prompt([{
-          type: 'list', name: 'selected',
-          message: `Providers matching "${search}" (${matches.length} found):`,
-          choices,
-          pageSize: Math.min(matches.length + 1, 15),
-        }]);
-
-        if (selected === '__retry__') continue;
-        providerId = selected;
-      }
+      if (!providerId) continue;
 
       const { connectionName, apiKey } = await inquirer.prompt([
         { type: 'input', name: 'connectionName', message: 'Connection Name:', default: 'My Account' },
