@@ -56,7 +56,7 @@ app.get('/v1/models', async (req, res) => {
   }
 });
 
-app.post(['/v1/chat/completions', '/v1/messages'], async (req, res) => {
+app.post(['/v1/chat/completions', '/v1/messages', '/v1/responses'], async (req, res) => {
   try {
     const nextReq = createNextRequest(req);
     const response = await handleChat(nextReq, {

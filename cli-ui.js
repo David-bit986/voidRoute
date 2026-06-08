@@ -1598,19 +1598,24 @@ export async function manageCliTools(port) {
         try {
           if (!fs.existsSync(cxDir)) fs.mkdirSync(cxDir, { recursive: true });
           let tomlContent = fs.existsSync(cxConfig) ? fs.readFileSync(cxConfig, 'utf8') : '';
+          
+          if (tomlContent.match(/model_provider\s*=/)) tomlContent = tomlContent.replace(/model_provider\s*=\s*".*"/, `model_provider = "voidRoute"`);
+          else tomlContent = `model_provider = "voidRoute"\n` + tomlContent;
+          
+          if (tomlContent.match(/^model\s*=/m)) tomlContent = tomlContent.replace(/^model\s*=\s*".*"/m, `model = "${selectedModel}"`);
+          else tomlContent = `model = "${selectedModel}"\n` + tomlContent;
+
           if (!tomlContent.includes('[model_providers.voidRoute]')) {
             tomlContent += `\n[model_providers.voidRoute]\nname = "voidRoute"\nbase_url = "${endpoint}"\nwire_api = "responses"\n`;
           }
-          if (tomlContent.match(/model_provider\s*=/)) tomlContent = tomlContent.replace(/model_provider\s*=\s*".*"/, `model_provider = "voidRoute"`);
-          else tomlContent += `\nmodel_provider = "voidRoute"`;
-          if (tomlContent.match(/^model\s*=/m)) tomlContent = tomlContent.replace(/^model\s*=\s*".*"/m, `model = "${selectedModel}"`);
-          else tomlContent += `\nmodel = "${selectedModel}"\n`;
           fs.writeFileSync(cxConfig, tomlContent.trim() + '\n');
           let authData = {};
           if (fs.existsSync(cxAuth)) { try { authData = JSON.parse(fs.readFileSync(cxAuth, 'utf8')); } catch (e) {} }
           authData.OPENAI_API_KEY = "sk_voidRoute"; authData.auth_mode = "apikey";
           fs.writeFileSync(cxAuth, JSON.stringify(authData, null, 2));
           console.log(chalk.green(`  ✅ Successfully updated ${cxConfig}`));
+          console.log(chalk.yellow(`  ⚠️  Note: The Codex app only supports a single custom model at a time.`));
+          console.log(chalk.yellow(`      It will display as "Custom Model" in the app UI, but will route correctly.`));
         } catch (e) { console.log(chalk.red(`  ❌ Failed to write config: ${e.message}`)); }
       }
     }
