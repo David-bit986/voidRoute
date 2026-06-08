@@ -645,6 +645,7 @@ async function manageProviders(port) {
         { name: '📋 List / Search Available Providers',                                value: 'list' },
         { name: '🔐 Add OAuth Provider (GitHub, Claude, Kiro, Gemini, Antigravity...)', value: 'add_oauth' },
         { name: '🔑 Add API Key Provider (Search by name)',                             value: 'add_apikey' },
+        { name: '🏠 Add Local Network Server (LM Studio / llama.cpp / vLLM)',            value: 'add_local' },
         { name: '🔧 Add Custom API (OpenAI-compatible, name it yourself)',               value: 'add_custom' },
         { name: '🗑️  Remove a Provider',                                                 value: 'remove' },
         { name: '🔙 Back',                                                               value: 'back' },
@@ -760,6 +761,113 @@ async function manageProviders(port) {
       if (apiKey) {
         await createProviderConnection({ provider: providerId, name: connectionName, accessToken: apiKey, authType: 'apikey', isActive: true });
         console.log(chalk.green(`\n  ✅ ${providerId} added successfully!\n`));
+      }
+    }
+
+    if (pAction === 'add_local') {
+      console.log(chalk.cyan('\n  ── Add Local Network Server ──\n'));
+      const { name } = await inquirer.prompt([{
+        type: 'input', name: 'name',
+        message: 'Provider name (e.g. "my-pc", "lm-studio"):',
+        default: 'local-pc',
+        validate: (v) => v.length > 0 || 'Name is required',
+      }]);
+      
+      const { ipAndPort } = await inquirer.prompt([{
+        type: 'input', name: 'ipAndPort',
+        message: 'Enter IP and Port (e.g., 192.168.50.39:8080 or localhost:1234):',
+        default: '192.168.50.39:8080',
+        validate: (v) => v.length > 0 || 'IP and Port are required',
+      }]);
+
+      let baseUrl = ipAndPort;
+      if (!baseUrl.startsWith('http')) baseUrl = `http://${baseUrl}`;
+      if (!baseUrl.endsWith('/v1')) baseUrl = `${baseUrl.replace(/\/$/, '')}/v1`;
+
+      console.log(chalk.gray(`  Using Base URL: ${baseUrl}`));
+
+      const safeId = name.replace(/[^a-z0-9-]/gi, '-').replace(/-+/g, '-').toLowerCase();
+      const nodeId = `openai-compatible-${safeId}-${randomUUID().slice(0, 8)}`;
+
+      await createProviderNode({
+        id: nodeId,
+        type: 'openai-compatible',
+        name,
+        prefix: name,
+        apiType: 'openai',
+        baseUrl,
+      });
+
+      await createProviderConnection({
+        provider: nodeId,
+        name,
+        accessToken: "local-no-key",
+        authType: 'apikey',
+        isActive: true,
+      });
+
+      console.log(chalk.green(`\n  ✅ Local provider "${name}" created!\n`));
+      
+      console.log(chalk.cyan(`  Attempting to auto-detect models from ${baseUrl}...`));
+      try {
+        const fetchRes = await fetch(`${baseUrl}/models`, { headers: { 'Accept': 'application/json' }, signal: AbortSignal.timeout(3000) });
+        if (fetchRes.ok) {
+          const data = await fetchRes.json();
+          const models = data.data ? data.data : (Array.isArray(data) ? data : []);
+          let added = 0;
+          for (const m of models) {
+            const mId = m.id || m.name || m;
+            if (typeof mId === 'string') {
+              await addCustomModel({ providerAlias: name, id: mId, type: 'llm', name: mId });
+              console.log(chalk.green(`  ✅ Found & Added model: ${mId}`));
+              added++;
+            }
+          }
+          if (added > 0) {
+            console.log(chalk.green(`\n  ✅ Successfully auto-detected and added ${added} models!`));
+            continue;
+          }
+        }
+      } catch (e) {}
+
+      console.log(chalk.yellow(`  ⚠️ Could not auto-detect models from ${baseUrl}/models.`));
+      
+      const models = [];
+      console.log(chalk.cyan('\n  Please add your loaded model name manually (e.g. "llama-3-8b"):\n'));
+
+      while (true) {
+        if (models.length > 0) console.log(chalk.gray(`  Current models: ${models.join(', ')}`));
+        const { modelAction } = await inquirer.prompt([{
+          type: 'list', name: 'modelAction',
+          message: 'Model Options:',
+          choices: [
+            { name: '➕ Add Model', value: 'add' },
+            ...(models.length > 0 ? [{ name: '🗑️  Delete Last Model', value: 'delete' }] : []),
+            { name: '✅ Save & Finish', value: 'finish' },
+          ],
+        }]);
+
+        if (modelAction === 'delete') {
+          const removed = models.pop();
+          console.log(chalk.yellow(`  🗑️  Removed: ${removed}\n`));
+          continue;
+        }
+
+        if (modelAction === 'finish') {
+          for (const modelId of models) {
+            await addCustomModel({ providerAlias: name, id: modelId, type: 'llm', name: modelId });
+          }
+          console.log(chalk.green(`\n  ✅ Custom provider "${name}" configured with ${models.length} models!\n`));
+          break;
+        }
+
+        const { modelId } = await inquirer.prompt([{
+          type: 'input', name: 'modelId',
+          message: 'Exact Model ID/Name (as it appears in your server):',
+          validate: (v) => v.length > 0 || 'Enter a model ID',
+        }]);
+        models.push(modelId.trim());
+        console.log(chalk.green(`  ✅ Added: ${modelId.trim()}\n`));
       }
     }
 
