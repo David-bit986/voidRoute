@@ -12,7 +12,7 @@ import {
   deleteProviderConnection, deleteProviderConnectionsByProvider,
   updateProviderConnection,
   getCombos, createCombo, deleteCombo,
-  createProviderNode, deleteProviderNode,
+  createProviderNode, deleteProviderNode, getProviderNodeById,
   addCustomModel, deleteCustomModel,
   getApiKeys, createApiKey, deleteApiKey,
 } from './src/lib/localDb.js';
@@ -139,8 +139,20 @@ async function fetchProviderModels(providerId, conn) {
       headers['Authorization'] = `Bearer ${conn.apiKey}`;
     } else {
       const definition = PROVIDER_ENDPOINTS[providerId];
+      let base = '';
       if (definition && definition.baseUrl) {
-        let base = definition.baseUrl;
+        base = definition.baseUrl;
+      } else if (providerId.startsWith('openai-compatible-')) {
+        const { getProviderNodeById } = await import('./src/lib/localDb.js');
+        const node = await getProviderNodeById(providerId);
+        if (node && node.baseUrl) {
+          base = node.baseUrl;
+        }
+      } else if (conn?.providerSpecificData?.baseUrl) {
+        base = conn.providerSpecificData.baseUrl;
+      }
+
+      if (base) {
         if (base.endsWith('/chat/completions')) {
           base = base.replace(/\/chat\/completions$/, '');
         } else if (base.endsWith('/messages')) {
@@ -155,7 +167,7 @@ async function fetchProviderModels(providerId, conn) {
           url = `${base}/models`;
         }
 
-        if (conn.apiKey) {
+        if (conn.apiKey && conn.apiKey !== 'local-no-key') {
           headers['Authorization'] = `Bearer ${conn.apiKey}`;
         }
       }
@@ -1263,7 +1275,7 @@ async function listModels(port) {
         console.log(chalk.dim(`    ... and ${fetchedModels.length - 50} more`));
       }
     } else {
-      const list = PROVIDER_MODELS[alias] || PROVIDER_MODELS[provider];
+      const list = getModelsByProviderId(provider) || PROVIDER_MODELS[alias] || PROVIDER_MODELS[provider];
       if (list && list.length > 0) {
         console.log(chalk.white.bold(`  ${provider}${aliasStr}`) + chalk.dim(` (${list.length} static)`));
         for (const m of list) {
@@ -1460,7 +1472,7 @@ export async function manageCliTools(port) {
       } else {
         // Fallback to static model list
         const alias = getProviderAlias(conn.provider);
-        const list = PROVIDER_MODELS[alias] || PROVIDER_MODELS[conn.provider];
+        const list = getModelsByProviderId(conn.provider) || PROVIDER_MODELS[alias] || PROVIDER_MODELS[conn.provider];
         if (list) {
           for (const m of list) {
             const fullId = alias ? `${alias}/${m.id || m}` : (m.id || m);
