@@ -792,6 +792,12 @@ async function manageProviders(port) {
         validate: (v) => v.length > 0 || 'IP and Port are required',
       }]);
 
+      const { apiKey } = await inquirer.prompt([{
+        type: 'input', name: 'apiKey',
+        message: 'API Key (Leave empty if none is required):',
+        default: '',
+      }]);
+
       let baseUrl = ipAndPort;
       if (!baseUrl.startsWith('http')) baseUrl = `http://${baseUrl}`;
       if (!baseUrl.endsWith('/v1')) baseUrl = `${baseUrl.replace(/\/$/, '')}/v1`;
@@ -813,7 +819,7 @@ async function manageProviders(port) {
       await createProviderConnection({
         provider: nodeId,
         name,
-        accessToken: "local-no-key",
+        accessToken: apiKey.trim(),
         authType: 'apikey',
         isActive: true,
       });

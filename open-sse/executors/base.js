@@ -58,9 +58,9 @@ export class BaseExecutor {
       }
     } else {
       // Standard Bearer token auth for other providers
-      if (credentials.accessToken) {
+      if (credentials.accessToken && credentials.accessToken !== "local-no-key") {
         headers["Authorization"] = `Bearer ${credentials.accessToken}`;
-      } else if (credentials.apiKey) {
+      } else if (credentials.apiKey && credentials.apiKey !== "local-no-key") {
         headers["Authorization"] = `Bearer ${credentials.apiKey}`;
       }
     }
