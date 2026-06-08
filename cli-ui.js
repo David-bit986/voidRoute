@@ -822,6 +822,7 @@ async function manageProviders(port) {
         accessToken: apiKey.trim(),
         authType: 'apikey',
         isActive: true,
+        providerSpecificData: { baseUrl },
       });
 
       console.log(chalk.green(`\n  ✅ Local provider "${name}" created!\n`));
@@ -930,6 +931,16 @@ async function manageProviders(port) {
           accessToken: apiKey,
           authType: 'apikey',
           isActive: true,
+          providerSpecificData: { baseUrl },
+        });
+      } else {
+        await createProviderConnection({
+          provider: nodeId,
+          name,
+          accessToken: '',
+          authType: 'apikey',
+          isActive: true,
+          providerSpecificData: { baseUrl },
         });
       }
 
