@@ -590,11 +590,11 @@ export async function setupCLI(port) {
     const { action } = await inquirer.prompt([{
       type: 'list', name: 'action', message: chalk.bold('Main Menu:'),
       choices: [
-        { name: '🌐  Manage Providers',  value: 'providers' },
-        { name: '🛠️   CLI Tools Config', value: 'cli_tools' },
-        { name: '⚙️   Settings',          value: 'settings' },
-        { name: '🖥️   View Live Logs',    value: 'logs' },
-        { name: '❌  Exit',              value: 'exit' },
+        { name: '🌐 Manage Providers', value: 'providers' },
+        { name: '🚀 CLI Tools Config', value: 'cli_tools' },
+        { name: '🔧 Settings',         value: 'settings' },
+        { name: '📊 View Live Logs',   value: 'logs' },
+        { name: '❌ Exit',             value: 'exit' },
       ],
       loop: false
     }]);
@@ -631,20 +631,6 @@ export async function setupCLI(port) {
       displayWelcomeAscii(port);
       continue;
     }
-    if (action === 'status') {
-      const settings = await getSettings();
-      const conns = await getProviderConnections();
-      const combos = await getCombos();
-      const keys = await getApiKeys();
-      console.log(chalk.green('\n  ┌─ Server Status ─────────────────────┐'));
-      console.log(chalk.green(`  │  Endpoint : ${chalk.white(`http://localhost:${port}/v1`)}`));
-      console.log(chalk.green(`  │  Providers: ${chalk.white(`${conns.filter(c => c.isActive).length} active / ${conns.length} total`)}`));
-      console.log(chalk.green(`  │  Combos   : ${chalk.white(combos.length)}`));
-      console.log(chalk.green(`  │  RTK Saver: ${settings.rtkEnabled ? chalk.green('ON') : chalk.red('OFF')}`));
-      console.log(chalk.green(`  │  Caveman  : ${settings.cavemanEnabled ? chalk.green('ON') : chalk.red('OFF')}`));
-      console.log(chalk.green('  └────────────────────────────────────┘\n'));
-    }
-
     // ─── PROVIDERS ────────────────────────────────────────────────────────
     if (action === 'providers') {
       await manageProviders(port);
@@ -658,11 +644,6 @@ export async function setupCLI(port) {
     // ─── CLI TOOLS CONFIG ─────────────────────────────────────────────────
     if (action === 'cli_tools') {
       await manageCliTools(port);
-    }
-
-    // ─── LIST MODELS ──────────────────────────────────────────────────────
-    if (action === 'models') {
-      await listModels(port);
     }
 
     // ─── SETTINGS ─────────────────────────────────────────────────────────
@@ -695,10 +676,10 @@ async function manageProviders(port) {
       type: 'list', name: 'pAction', message: 'Provider Options:',
       choices: [
         { name: '🔐 Add OAuth Provider (GitHub, Claude, Kiro, Gemini...)', value: 'add_oauth' },
-        { name: '🔑 Add API Key / Local / Custom Provider',                value: 'add_other' },
-        { name: '🗑️   Remove a Provider',                                  value: 'remove' },
+        { name: '🔌 Add API Key / Local / Custom Provider',                value: 'add_other' },
+        { name: '🗑️ Remove a Provider',                                    value: 'remove' },
         new inquirer.Separator(),
-        { name: '🔙  Back',                                                value: 'back' },
+        { name: '🔙 Back',                                                 value: 'back' },
       ],
       loop: false
     }]);
@@ -710,10 +691,10 @@ async function manageProviders(port) {
         type: 'list', name: 'otherAction', message: 'Select type of provider to add:',
         choices: [
           { name: '🔑 Standard API Key Provider (OpenAI, Anthropic, DeepSeek...)', value: 'add_apikey' },
-          { name: '🏠 Local Network Server (LM Studio, llama.cpp, vLLM...)',      value: 'add_local' },
-          { name: '🔧 Custom API Endpoint (OpenAI-compatible)',                  value: 'add_custom' },
+          { name: '🏠 Local Network Server (LM Studio, llama.cpp, vLLM...)',       value: 'add_local' },
+          { name: '🛠️ Custom API Endpoint (OpenAI-compatible)',                     value: 'add_custom' },
           new inquirer.Separator(),
-          { name: '🔙  Back',                                                      value: 'back' },
+          { name: '🔙 Back',                                                       value: 'back' },
         ],
         loop: false
       }]);
@@ -781,18 +762,19 @@ async function manageProviders(port) {
         value: k,
         description: conns.some(c => c.provider === k) ? 'Already connected' : undefined,
       }));
+      providerChoices.push(new inquirer.Separator(), { name: '🔙 Back', value: 'back' });
 
       const providerId = await search({
         message: 'Search and select a provider:',
-        source: async (term, { signal }) => {
+        source: async (term) => {
           if (!term) return providerChoices;
           const t = term.toLowerCase();
-          return providerChoices.filter(c => c.name.toLowerCase().includes(t));
+          return providerChoices.filter(c => c.value === 'back' || (c.name && c.name.toLowerCase().includes(t)));
         },
         pageSize: 10,
       });
 
-      if (!providerId) continue;
+      if (!providerId || providerId === 'back') continue;
 
       const { connectionName, apiKey } = await inquirer.prompt([
         { type: 'input', name: 'connectionName', message: 'Connection Name:', default: 'My Account' },
@@ -809,10 +791,10 @@ async function manageProviders(port) {
       console.log(chalk.cyan('\n  ── Add Local Network Server ──\n'));
       const { name } = await inquirer.prompt([{
         type: 'input', name: 'name',
-        message: 'Provider name (e.g. "my-pc", "lm-studio"):',
+        message: 'Provider name (e.g. "my-pc", "lm-studio") [Leave empty to cancel]:',
         default: 'local-pc',
-        validate: (v) => v.length > 0 || 'Name is required',
       }]);
+      if (!name) continue;
       
       const { ipAndPort } = await inquirer.prompt([{
         type: 'input', name: 'ipAndPort',
@@ -923,8 +905,7 @@ async function manageProviders(port) {
       console.log(chalk.cyan('\n  ── Create Custom OpenAI-Compatible Provider ──\n'));
       const { name } = await inquirer.prompt([{
         type: 'input', name: 'name',
-        message: 'Provider name (used as model prefix, e.g. "my-api" → my-api/model):',
-        validate: (v) => v.length > 0 || 'Name is required',
+        message: 'Provider name (used as model prefix, e.g. "my-api" → my-api/model) [Leave empty to cancel]:',
       }]);
       if (!name) continue;
 
@@ -1280,8 +1261,10 @@ async function manageSettings() {
       { name: `Caveman Mode    : ${settings.cavemanEnabled ? chalk.green('ON') : chalk.red('OFF')}  — Toggle`, value: 'caveman' },
       { name: `Require API Key : ${settings.requireApiKey ? chalk.green('ON') : chalk.red('OFF')}  — Toggle`, value: 'requireKey' },
       { name: `Debug Logging   : ${settings.debugMode ? chalk.green('ON') : chalk.red('OFF')}  — Toggle`, value: 'debug' },
+      new inquirer.Separator(),
       { name: '🔙 Back', value: 'back' },
     ],
+    loop: false
   }]);
 
   if (setting === 'back') return;
@@ -1405,6 +1388,7 @@ export async function manageCliTools(port) {
         new inquirer.Separator(),
         { name: '🔙 Back', value: 'back' },
       ],
+      loop: false
     }]);
 
     if (tool === 'back') return;
@@ -1441,12 +1425,19 @@ export async function manageCliTools(port) {
         continue;
       }
       
-      const providerChoices = connections.map(c => ({ name: `${c.provider} (${c.name || 'Account'})`, value: c.id }));
+      const providerChoices = [
+        ...connections.map(c => ({ name: `${c.provider} (${c.name || 'Account'})`, value: c.id })),
+        new inquirer.Separator(),
+        { name: '🔙 Back', value: 'back' }
+      ];
       const { selectedConnId } = await inquirer.prompt([{
         type: 'list', name: 'selectedConnId',
         message: `Which provider do you want to use for ${tool}?`,
-        choices: providerChoices
+        choices: providerChoices,
+        loop: false
       }]);
+      
+      if (selectedConnId === 'back') continue;
       
       const conn = connections.find(c => c.id === selectedConnId);
       
@@ -1494,6 +1485,7 @@ export async function manageCliTools(port) {
         })),
         new inquirer.Separator(),
         { name: '🖊️  Enter custom model manually...', value: '__custom__' },
+        { name: '🔙 Back', value: 'back' },
       ];
       
       const chosenModel = await search({
@@ -1502,13 +1494,15 @@ export async function manageCliTools(port) {
           if (!term) return modelChoices;
           const t = term.toLowerCase();
           return modelChoices.filter(c => {
-            if (c.value === '__custom__') return true;
+            if (c.value === '__custom__' || c.value === 'back') return true;
             if (typeof c.name === 'string') return c.name.toLowerCase().includes(t);
             return false;
           });
         },
         pageSize: 15,
       });
+      
+      if (chosenModel === 'back') continue;
       
       if (chosenModel === '__custom__') {
         const { customModel } = await inquirer.prompt([{
