@@ -1259,6 +1259,7 @@ async function manageSettings() {
     choices: [
       { name: `RTK Token Saver : ${settings.rtkEnabled ? chalk.green('ON') : chalk.red('OFF')}  — Toggle`, value: 'rtk' },
       { name: `Caveman Mode    : ${settings.cavemanEnabled ? chalk.green('ON') : chalk.red('OFF')}  — Toggle`, value: 'caveman' },
+      { name: `Caveman Level   : ${chalk.cyan(settings.cavemanLevel || 'full')}  — Change`, value: 'cavemanLevel' },
       { name: `Require API Key : ${settings.requireApiKey ? chalk.green('ON') : chalk.red('OFF')}  — Toggle`, value: 'requireKey' },
       { name: `Debug Logging   : ${settings.debugMode ? chalk.green('ON') : chalk.red('OFF')}  — Toggle`, value: 'debug' },
       new inquirer.Separator(),
@@ -1268,6 +1269,20 @@ async function manageSettings() {
   }]);
 
   if (setting === 'back') return;
+
+  if (setting === 'cavemanLevel') {
+    const { newLevel } = await inquirer.prompt([{
+      type: 'list', name: 'newLevel', message: 'Select Caveman Intensity:',
+      choices: [
+        { name: 'lite (Professional but concise)', value: 'lite' },
+        { name: 'full (Drop articles, short fragments)', value: 'full' },
+        { name: 'ultra (Extreme abbreviation, telegraphic)', value: 'ultra' }
+      ]
+    }]);
+    await updateSettings({ cavemanLevel: newLevel });
+    console.log(chalk.green(`  ✅ Caveman Level set to ${newLevel}\n`));
+    return;
+  }
 
   const toggleMap = { rtk: 'rtkEnabled', caveman: 'cavemanEnabled', requireKey: 'requireApiKey', debug: 'debugMode' };
   const key = toggleMap[setting];
