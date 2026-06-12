@@ -58,7 +58,10 @@ export function initConsoleLogCapture() {
     state.originals[level] = console[level];
     console[level] = (...args) => {
       appendLine(toLogLine(level, args));
-      state.originals[level](...args);
+      // Only print to stdout if TUI is not actively waiting for input
+      if (!global.TUI_ACTIVE) {
+        state.originals[level](...args);
+      }
     };
   }
 

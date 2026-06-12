@@ -9,6 +9,7 @@ import cors from 'cors';
 import { handleChat } from './src/sse/handlers/chat.js';
 import { initTranslators } from '#open-sse/translator/index.js';
 import { setupCLI } from './cli-ui.js';
+import { initConsoleLogCapture } from './src/lib/consoleLogBuffer.js';
 
 const app = express();
 app.use(cors());
@@ -96,6 +97,7 @@ app.post(['/v1/chat/completions', '/v1/messages', '/v1/responses'], async (req, 
 });
 
 async function start() {
+  initConsoleLogCapture();
   await initTranslators();
   const PORT = process.env.PORT || 20130;
   app.listen(PORT, () => {

@@ -25,6 +25,7 @@ import {
 } from './src/lib/oauth/constants/oauth.js';
 import { generatePKCE } from './src/lib/oauth/utils/pkce.js';
 import { getProviderAlias, AI_PROVIDERS } from './src/shared/constants/providers.js';
+import { getConsoleLogs, getConsoleEmitter } from './src/lib/consoleLogBuffer.js';
 
 // ─── Provider Classification ────────────────────────────────────────────────
 // Providers that use OAuth / device-code flows (NOT simple API keys)
@@ -574,6 +575,7 @@ export async function setupCLI(port) {
   // Disable mouse tracking/reporting so mouse clicks don't interfere with the list selector
   process.stdout.write('\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?1015l\x1b[?1007l');
   displayWelcomeAscii(port);
+  global.TUI_ACTIVE = true;
 
   while (true) {
     const { action } = await inquirer.prompt([{
@@ -584,13 +586,43 @@ export async function setupCLI(port) {
         { name: '📋  List Available Models', value: 'models' },
         { name: '⚙️   Settings',         value: 'settings' },
         { name: '📊  Server Status',    value: 'status' },
+        { name: '🖥️   View Live Logs',    value: 'logs' },
         { name: '❌  Exit',             value: 'exit' },
       ],
     }]);
 
     if (action === 'exit') { console.log(chalk.gray('  Bye!')); process.exit(0); }
 
-    // ─── STATUS ───────────────────────────────────────────────────────────
+    // ─── LOGS ─────────────────────────────────────────────────────────────
+    if (action === 'logs') {
+      console.clear();
+      console.log(chalk.cyan('  ── Live Server Logs ──'));
+      console.log(chalk.gray('  (Press ANY key to return to menu)\n'));
+      
+      global.TUI_ACTIVE = false;
+      
+      const logs = getConsoleLogs();
+      logs.forEach(l => process.stdout.write(l + '\n'));
+      
+      const emitter = getConsoleEmitter();
+      const onLine = (line) => process.stdout.write(line + '\n');
+      emitter.on('line', onLine);
+
+      await new Promise((resolve) => {
+        process.stdin.setRawMode(true);
+        process.stdin.resume();
+        process.stdin.once('data', () => {
+          process.stdin.setRawMode(false);
+          resolve();
+        });
+      });
+
+      emitter.off('line', onLine);
+      global.TUI_ACTIVE = true;
+      console.clear();
+      displayWelcomeAscii(port);
+      continue;
+    }
     if (action === 'status') {
       const settings = await getSettings();
       const conns = await getProviderConnections();
@@ -1142,20 +1174,30 @@ async function manageCombos() {
           console.log(chalk.gray(`  💡 Tip: You can find all models in the official docs: ${docUrl}`));
         }
         
-        const modelChoices = providerModels.length > 0
+        const baseModelChoices = providerModels.length > 0
           ? providerModels.map(m => ({ name: `${m.id}  ${chalk.gray('— ' + m.name)}`, value: m.id }))
           : [{ name: 'auto', value: 'auto' }];
+
+        const comboModelChoices = [
+          ...baseModelChoices,
+          new inquirer.Separator(),
+          { name: '✍️ Custom Model (type your own)', value: 'custom' },
+          { name: '🔙 Back', value: 'back' }
+        ];
         
-        const { modelChoice } = await inquirer.prompt([{
-          type: 'list', name: 'modelChoice', message: `Select model for ${provider} (${modelChoices.length} available):`,
-          choices: [
-            ...modelChoices,
-            new inquirer.Separator(),
-            { name: '✍️ Custom Model (type your own)', value: 'custom' },
-            { name: '🔙 Back', value: 'back' }
-          ],
-          pageSize: 20
-        }]);
+        const modelChoice = await search({
+          message: `Select model for ${provider} (${providerModels.length} available):`,
+          source: async (term) => {
+            if (!term) return comboModelChoices;
+            const t = term.toLowerCase();
+            return comboModelChoices.filter(c => {
+              if (c.value === 'custom' || c.value === 'back') return true;
+              if (typeof c.name === 'string') return c.name.toLowerCase().includes(t);
+              return false;
+            });
+          },
+          pageSize: 15
+        });
         
         if (modelChoice === 'back') continue;
         
@@ -1511,12 +1553,19 @@ export async function manageCliTools(port) {
         { name: '🖊️  Enter custom model manually...', value: '__custom__' },
       ];
       
-      const { chosenModel } = await inquirer.prompt([{
-        type: 'list', name: 'chosenModel',
+      const chosenModel = await search({
         message: `Select the default model to use for ${tool}:`,
-        choices: modelChoices,
+        source: async (term) => {
+          if (!term) return modelChoices;
+          const t = term.toLowerCase();
+          return modelChoices.filter(c => {
+            if (c.value === '__custom__') return true;
+            if (typeof c.name === 'string') return c.name.toLowerCase().includes(t);
+            return false;
+          });
+        },
         pageSize: 15,
-      }]);
+      });
       
       if (chosenModel === '__custom__') {
         const { customModel } = await inquirer.prompt([{
