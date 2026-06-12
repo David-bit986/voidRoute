@@ -1,13 +1,9 @@
 import { EventEmitter } from "events";
 import { CONSOLE_LOG_CONFIG } from "#shared/constants/config.js";
 
-const consoleLevels = ["log", "info", "warn", "error", "debug"];
-
 if (!global._consoleLogBufferState) {
   global._consoleLogBufferState = {
     logs: [],
-    patched: false,
-    originals: {},
     emitter: new EventEmitter(),
   };
   global._consoleLogBufferState.emitter.setMaxListeners(50);
@@ -15,57 +11,29 @@ if (!global._consoleLogBufferState) {
 
 const state = global._consoleLogBufferState;
 
-// Ensure emitter exists (handles hot reload with stale global)
-if (!state.emitter) {
-  state.emitter = new EventEmitter();
-  state.emitter.setMaxListeners(50);
-}
-
-function toLogLine(level, args) {
-  return args.map(formatArg).join(" ");
-}
-
-// Strip ANSI escape codes so terminal colors don't bleed into UI
-const ANSI_RE = /\x1b\[[0-9;]*m/g;
-
+// Strip ANSI escape codes if needed for UI, but keeping colors for terminal is usually better
+// For now, we will just store exactly what is passed.
 function stripAnsi(str) {
-  return str.replace(ANSI_RE, "");
+  return str.replace(/\x1b\[[0-9;]*m/g, "");
 }
 
-function formatArg(arg) {
-  if (typeof arg === "string") return stripAnsi(arg);
-  if (arg instanceof Error) return stripAnsi(arg.stack || arg.message || String(arg));
-  try {
-    return stripAnsi(JSON.stringify(arg));
-  } catch {
-    return stripAnsi(String(arg));
-  }
-}
-
-function appendLine(line) {
+export function appendLogLine(line) {
   state.logs.push(line);
   const maxLines = CONSOLE_LOG_CONFIG.maxLines;
   if (state.logs.length > maxLines) {
     state.logs = state.logs.slice(-maxLines);
   }
   state.emitter.emit("line", line);
+  
+  // Only print to stdout if TUI is not actively waiting for input
+  if (!global.TUI_ACTIVE) {
+    process.stdout.write(line + "\n");
+  }
 }
 
+// We no longer patch console.log globally to avoid capturing UI/inquirer prompts.
 export function initConsoleLogCapture() {
-  if (state.patched) return;
-
-  for (const level of consoleLevels) {
-    state.originals[level] = console[level];
-    console[level] = (...args) => {
-      appendLine(toLogLine(level, args));
-      // Only print to stdout if TUI is not actively waiting for input
-      if (!global.TUI_ACTIVE) {
-        state.originals[level](...args);
-      }
-    };
-  }
-
-  state.patched = true;
+  // No-op. We route directly from logger.js now.
 }
 
 export function getConsoleLogs() {

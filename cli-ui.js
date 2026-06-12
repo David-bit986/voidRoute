@@ -574,21 +574,29 @@ export async function setupCLI(port) {
   console.clear();
   // Disable mouse tracking/reporting so mouse clicks don't interfere with the list selector
   process.stdout.write('\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?1015l\x1b[?1007l');
-  displayWelcomeAscii(port);
+  
   global.TUI_ACTIVE = true;
 
   while (true) {
+    console.clear();
+    displayWelcomeAscii(port);
+
+    const { getProviderConnections } = await import('./src/lib/localDb.js');
+    const conns = await getProviderConnections();
+    const activeCount = conns.filter(c => c.isActive).length;
+
+    console.log(chalk.gray(`  Providers: ${activeCount > 0 ? chalk.green(activeCount + ' active') : chalk.red('0 active')}\n`));
+
     const { action } = await inquirer.prompt([{
       type: 'list', name: 'action', message: chalk.bold('Main Menu:'),
       choices: [
-        { name: '🌐  Manage Providers', value: 'providers' },
+        { name: '🌐  Manage Providers',  value: 'providers' },
         { name: '🛠️   CLI Tools Config', value: 'cli_tools' },
-        { name: '📋  List Available Models', value: 'models' },
-        { name: '⚙️   Settings',         value: 'settings' },
-        { name: '📊  Server Status',    value: 'status' },
+        { name: '⚙️   Settings',          value: 'settings' },
         { name: '🖥️   View Live Logs',    value: 'logs' },
-        { name: '❌  Exit',             value: 'exit' },
+        { name: '❌  Exit',              value: 'exit' },
       ],
+      loop: false
     }]);
 
     if (action === 'exit') { console.log(chalk.gray('  Bye!')); process.exit(0); }
@@ -683,58 +691,39 @@ async function manageProviders(port) {
     }
     console.log('');
 
-    const { pAction } = await inquirer.prompt([{
+    let { pAction } = await inquirer.prompt([{
       type: 'list', name: 'pAction', message: 'Provider Options:',
       choices: [
-        { name: '📋 List / Search Available Providers',                                value: 'list' },
-        { name: '🔐 Add OAuth Provider (GitHub, Claude, Kiro, Gemini, Antigravity...)', value: 'add_oauth' },
-        { name: '🔑 Add API Key Provider (Search by name)',                             value: 'add_apikey' },
-        { name: '🏠 Add Local Network Server (LM Studio / llama.cpp / vLLM)',            value: 'add_local' },
-        { name: '🔧 Add Custom API (OpenAI-compatible, name it yourself)',               value: 'add_custom' },
-        { name: '🗑️  Remove a Provider',                                                 value: 'remove' },
-        { name: '🔙 Back',                                                               value: 'back' },
+        { name: '🔐 Add OAuth Provider (GitHub, Claude, Kiro, Gemini...)', value: 'add_oauth' },
+        { name: '🔑 Add API Key / Local / Custom Provider',                value: 'add_other' },
+        { name: '🗑️   Remove a Provider',                                  value: 'remove' },
+        new inquirer.Separator(),
+        { name: '🔙  Back',                                                value: 'back' },
       ],
+      loop: false
     }]);
 
     if (pAction === 'back') return;
 
-    if (pAction === 'list') {
-      const providerEntries = Object.entries(AI_PROVIDERS).filter(([, p]) => !p.hidden);
-      let searchTerm = '';
-      while (true) {
-        const { search } = await inquirer.prompt([{
-          type: 'input', name: 'search',
-          message: 'Search providers (partial name, or empty to show all):',
-        }]);
-        searchTerm = search.toLowerCase().trim();
-        let results = providerEntries.filter(([id, p]) =>
-          !searchTerm || p.id.toLowerCase().includes(searchTerm) || p.name.toLowerCase().includes(searchTerm)
-        );
-
-        if (results.length === 0) {
-          console.log(chalk.red(`\n  No providers matching "${search}". Try again.\n`));
-          continue;
-        }
-
-        console.log(chalk.cyan(`\n  ── Available Providers ${searchTerm ? `matching "${search}"` : ''} (${results.length}) ──\n`));
-
-        const isConnected = (id) => conns.some(c => c.provider === id);
-        const authLabel = (p) => {
-          if (p.noAuth) return chalk.gray('no-auth');
-          if (p.authType === 'cookie') return chalk.magenta('cookie');
-          if (OAUTH_PROVIDERS[p.id] || p.authModes?.includes('oauth')) return chalk.magenta('oauth/apikey');
-          if (p.deprecated) return chalk.red('deprecated');
-          return chalk.yellow('apikey');
-        };
-
-        for (const [id, p] of results) {
-          const connected = isConnected(id) ? chalk.green(' ●') : chalk.gray(' ○');
-          const alias = p.alias ? chalk.dim(` [${p.alias}/]`) : '';
-          console.log(`  ${connected} ${chalk.white.bold(p.name)}${alias} ${chalk.dim(`(${id})`)}  ${authLabel(p)}`);
-        }
-        console.log('');
-        break;
-      }
+    if (pAction === 'add_other') {
+      const { otherAction } = await inquirer.prompt([{
+        type: 'list', name: 'otherAction', message: 'Select type of provider to add:',
+        choices: [
+          { name: '🔑 Standard API Key Provider (OpenAI, Anthropic, DeepSeek...)', value: 'add_apikey' },
+          { name: '🏠 Local Network Server (LM Studio, llama.cpp, vLLM...)',      value: 'add_local' },
+          { name: '🔧 Custom API Endpoint (OpenAI-compatible)',                  value: 'add_custom' },
+          new inquirer.Separator(),
+          { name: '🔙  Back',                                                      value: 'back' },
+        ],
+        loop: false
+      }]);
+      
+      if (otherAction === 'back') continue;
+      
+      // Map otherAction to original handlers below
+      if (otherAction === 'add_apikey') pAction = 'add_apikey';
+      if (otherAction === 'add_local') pAction = 'add_local';
+      if (otherAction === 'add_custom') pAction = 'add_custom';
     }
 
     if (pAction === 'add_oauth') {
@@ -742,7 +731,15 @@ async function manageProviders(port) {
         const isConnected = conns.some(c => c.provider === id);
         return { name: `${def.label} (${id})${isConnected ? chalk.gray(' — Already Connected') : ''}`, value: id };
       });
-      const { providerId } = await inquirer.prompt([{ type: 'list', name: 'providerId', message: 'Select OAuth Provider:', choices: oauthChoices }]);
+      oauthChoices.push(new inquirer.Separator(), { name: '🔙 Back', value: 'back' });
+      
+      const { providerId } = await inquirer.prompt([{ 
+        type: 'list', name: 'providerId', message: 'Select OAuth Provider:', 
+        choices: oauthChoices, loop: false 
+      }]);
+      
+      if (providerId === 'back') continue;
+
       const { connectionName } = await inquirer.prompt([{ type: 'input', name: 'connectionName', message: 'Connection Name:', default: 'My Account' }]);
 
       const oauthDef = OAUTH_PROVIDERS[providerId];
@@ -1296,60 +1293,6 @@ async function manageSettings() {
     await updateSettings({ [key]: newVal });
     console.log(chalk.green(`  ✅ ${key} set to ${newVal ? 'ON' : 'OFF'}\n`));
   }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-//  LIST AVAILABLE MODELS
-// ═══════════════════════════════════════════════════════════════════════════
-async function listModels(port) {
-  console.log(chalk.cyan('\n  ── Available Models ──\n'));
-  
-  const conns = await getProviderConnections({ isActive: true });
-  if (conns.length === 0) {
-    console.log(chalk.gray('  No active provider connections. Add providers first.\n'));
-    return;
-  }
-
-  const byProvider = {};
-  for (const c of conns) {
-    if (!byProvider[c.provider]) byProvider[c.provider] = c;
-  }
-
-  for (const [provider, conn] of Object.entries(byProvider).sort()) {
-    const sp = spin(`Fetching ${provider} models...`).start();
-    const fetchedModels = await fetchProviderModels(provider, conn);
-    sp.stop();
-
-    const alias = getProviderAlias ? getProviderAlias(provider) : null;
-    const aliasStr = alias ? ` [${alias}/]` : '';
-    
-    if (fetchedModels.length > 0) {
-      console.log(chalk.white.bold(`  ${provider}${aliasStr}`) + chalk.dim(` (${fetchedModels.length} models live)`));
-      for (const m of fetchedModels.slice(0, 50)) {
-        const fullId = alias ? `${alias}/${m.id}` : m.id;
-        const displayName = m.name && m.name !== m.id ? chalk.dim(` — ${m.name}`) : '';
-        console.log(chalk.gray(`    • ${fullId}${displayName}`));
-      }
-      if (fetchedModels.length > 50) {
-        console.log(chalk.dim(`    ... and ${fetchedModels.length - 50} more`));
-      }
-    } else {
-      const list = getModelsByProviderId(provider) || PROVIDER_MODELS[alias] || PROVIDER_MODELS[provider];
-      if (list && list.length > 0) {
-        console.log(chalk.white.bold(`  ${provider}${aliasStr}`) + chalk.dim(` (${list.length} static)`));
-        for (const m of list) {
-          const fullId = alias ? `${alias}/${m.id || m}` : (m.id || m);
-          const displayName = m.name ? chalk.dim(` — ${m.name}`) : '';
-          console.log(chalk.gray(`    • ${fullId}${displayName}`));
-        }
-      } else {
-        console.log(chalk.red(`  ${provider} — no models available`));
-      }
-    }
-    console.log('');
-  }
-  
-  console.log(chalk.dim('  Use these model IDs with your client. E.g., model: "ag/gemini-3.5-flash"\n'));
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

@@ -1,4 +1,5 @@
 // Logger utility for cloud
+import { appendLogLine } from "#lib/consoleLogBuffer.js";
 
 const LOG_LEVELS = {
   DEBUG: 0,
@@ -26,45 +27,45 @@ function formatData(data) {
 export function debug(tag, message, data) {
   if (LEVEL <= LOG_LEVELS.DEBUG) {
     const dataStr = data ? ` ${formatData(data)}` : "";
-    console.log(`[${formatTime()}] 🔍 [${tag}] ${message}${dataStr}`);
+    appendLogLine(`[${formatTime()}] 🔍 [${tag}] ${message}${dataStr}`);
   }
 }
 
 export function info(tag, message, data) {
   if (LEVEL <= LOG_LEVELS.INFO) {
     const dataStr = data ? ` ${formatData(data)}` : "";
-    console.log(`[${formatTime()}] ℹ️  [${tag}] ${message}${dataStr}`);
+    appendLogLine(`[${formatTime()}] ℹ️  [${tag}] ${message}${dataStr}`);
   }
 }
 
 export function warn(tag, message, data) {
   if (LEVEL <= LOG_LEVELS.WARN) {
     const dataStr = data ? ` ${formatData(data)}` : "";
-    // console.warn(`[${formatTime()}] ⚠️  [${tag}] ${message}${dataStr}`);
+    // appendLogLine(`[${formatTime()}] ⚠️  [${tag}] ${message}${dataStr}`);
   }
 }
 
 export function error(tag, message, data) {
   if (LEVEL <= LOG_LEVELS.ERROR) {
     const dataStr = data ? ` ${formatData(data)}` : "";
-    console.log(`[${formatTime()}] ❌ [${tag}] ${message}${dataStr}`);
+    appendLogLine(`[${formatTime()}] ❌ [${tag}] ${message}${dataStr}`);
   }
 }
 
 export function request(method, path, extra) {
   const dataStr = extra ? ` ${formatData(extra)}` : "";
-  console.log(`\x1b[36m[${formatTime()}] 📥 ${method} ${path}${dataStr}\x1b[0m`);
+  appendLogLine(`\x1b[36m[${formatTime()}] 📥 ${method} ${path}${dataStr}\x1b[0m`);
 }
 
 export function response(status, duration, extra) {
   const icon = status < 400 ? "📤" : "💥";
   const dataStr = extra ? ` ${formatData(extra)}` : "";
-  console.log(`[${formatTime()}] ${icon} ${status} (${duration}ms)${dataStr}`);
+  appendLogLine(`[${formatTime()}] ${icon} ${status} (${duration}ms)${dataStr}`);
 }
 
 export function stream(event, data) {
   const dataStr = data ? ` ${formatData(data)}` : "";
-  console.log(`[${formatTime()}] 🌊 [STREAM] ${event}${dataStr}`);
+  appendLogLine(`[${formatTime()}] 🌊 [STREAM] ${event}${dataStr}`);
 }
 
 // Mask sensitive data
