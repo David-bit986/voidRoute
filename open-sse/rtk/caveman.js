@@ -30,8 +30,8 @@ export function injectCaveman(body, format, level) {
 
 // OpenAI-shaped: messages[] (chat) or input[] (responses) or instructions (responses string)
 function injectMessagesSystem(body, prompt) {
-  // OpenAI Responses API: top-level string field
-  if (typeof body.instructions === "string") {
+  // OpenAI Responses API: top-level field
+  if (typeof body.instructions === "string" || ("input" in body && !("messages" in body))) {
     body.instructions = body.instructions
       ? `${body.instructions}${SEP}${prompt}`
       : prompt;
