@@ -24,6 +24,8 @@ const ALIAS_TO_PROVIDER_ID = {
   gemini: "gemini",
   openrouter: "openrouter",
   glm: "glm",
+  zai: "zai",
+  "z.ai": "zai",
   kimi: "kimi",
   minimax: "minimax",
   "minimax-cn": "minimax-cn",
