@@ -27,6 +27,8 @@ import { generatePKCE } from './src/lib/oauth/utils/pkce.js';
 import { getProviderAlias, AI_PROVIDERS } from './src/shared/constants/providers.js';
 import { getConsoleLogs, getConsoleEmitter } from './src/lib/consoleLogBuffer.js';
 import { fetchProviderModels } from './src/lib/providerModels.js';
+import { CodexAdapter } from './src/lib/cli-config/CodexAdapter.js';
+import { inspectCodexIntegration } from './src/lib/codex/integration.js';
 
 // ─── Provider Classification ────────────────────────────────────────────────
 // Providers that use OAuth / device-code flows (NOT simple API keys)
@@ -1192,6 +1194,7 @@ async function manageSettings() {
 export async function manageCliTools(port) {
   const endpoint = `http://localhost:${port}/v1`;
   const endpointNoV1 = `http://localhost:${port}`;
+  const codexAdapter = new CodexAdapter();
   
   // Helper: detect if a tool already has voidRoute config
   function detectStatus(tool) {
@@ -1211,10 +1214,15 @@ export async function manageCliTools(port) {
         return s?.provider?.['voidRoute'] ? 'connected' : null;
       }
       if (tool === 'codex') {
-        const paths = resolveConfigPath('codex');
-        const found = paths.find(p => fs.existsSync(p));
-        if (!found) return null;
-        return fs.readFileSync(found, 'utf8').includes('voidRoute') ? 'connected' : null;
+        const paths = codexAdapter.paths;
+        if (!fs.existsSync(paths.config) || !fs.existsSync(paths.catalog) || !fs.existsSync(paths.modelMap)) return null;
+        const status = inspectCodexIntegration({
+          config: fs.readFileSync(paths.config, 'utf8'),
+          catalog: JSON.parse(fs.readFileSync(paths.catalog, 'utf8')),
+          modelMap: JSON.parse(fs.readFileSync(paths.modelMap, 'utf8')),
+          catalogPath: paths.catalog,
+        });
+        return status.connected ? 'connected' : null;
       }
       if (tool === 'aider') {
         const paths = resolveConfigPath('aider');
@@ -1254,7 +1262,7 @@ export async function manageCliTools(port) {
         path.join(home, '.config', 'opencode-profiles', 'default', 'opencode.json'),
       ];
       case 'codex': return [
-        path.join(home, '.codex', 'config.toml'),
+        ...codexAdapter.resolveConfigPath(),
       ];
       case 'aider': return [
         path.join(home, '.aider.conf.yml'),
@@ -1327,9 +1335,16 @@ export async function manageCliTools(port) {
     let allModelsForPi = true; // Pi Agent registers all by default
     
     if (action === 'apply' && tool !== 'manual') {
-      const connections = await getProviderConnections();
+      const allConnections = await getProviderConnections();
+      const connections = tool === 'codex'
+        ? allConnections.filter(connection => connection.isActive)
+        : allConnections;
       if (connections.length === 0) {
-        console.log(chalk.red('  ❌ No providers added yet. Please add a provider first.'));
+        console.log(chalk.red(
+          tool === 'codex'
+            ? '  ❌ No active providers are available for the Codex picker.'
+            : '  ❌ No providers added yet. Please add a provider first.'
+        ));
         continue;
       }
       
@@ -1600,54 +1615,11 @@ export async function manageCliTools(port) {
     }
     // ──── CODEX ───────────────────────────────────────────────────────────
     else if (tool === 'codex') {
-      const cxDir = path.join(os.homedir(), '.codex');
-      const cxConfig = path.join(cxDir, 'config.toml');
-      const cxAuth = path.join(cxDir, 'auth.json');
-      
-      if (action === 'reset') {
-        try {
-          if (fs.existsSync(cxConfig)) {
-            let toml = fs.readFileSync(cxConfig, 'utf8');
-            toml = toml.replace(/\[model_providers\.voidRoute\][\s\S]*?(?=\n\[|$)/g, '');
-            if (toml.match(/model_provider\s*=\s*"voidRoute"/)) {
-              toml = toml.replace(/model_provider\s*=\s*"voidRoute"/, '');
-              toml = toml.replace(/^model\s*=.*$/m, '');
-            }
-            fs.writeFileSync(cxConfig, toml.replace(/\n{3,}/g, '\n\n').trim() + '\n');
-          }
-          if (fs.existsSync(cxAuth)) {
-            let auth = JSON.parse(fs.readFileSync(cxAuth, 'utf8'));
-            if (auth.auth_mode === 'apikey' && auth.OPENAI_API_KEY === 'sk_voidRoute') {
-              delete auth.OPENAI_API_KEY;
-              delete auth.auth_mode;
-            }
-            fs.writeFileSync(cxAuth, JSON.stringify(auth, null, 2));
-          }
-          console.log(chalk.green(`  ✅ voidRoute config removed from Codex.`));
-        } catch (e) { console.log(chalk.red(`  ❌ ${e.message}`)); }
-      } else {
-        try {
-          if (!fs.existsSync(cxDir)) fs.mkdirSync(cxDir, { recursive: true });
-          let tomlContent = fs.existsSync(cxConfig) ? fs.readFileSync(cxConfig, 'utf8') : '';
-          
-          if (tomlContent.match(/model_provider\s*=/)) tomlContent = tomlContent.replace(/model_provider\s*=\s*".*"/, `model_provider = "voidRoute"`);
-          else tomlContent = `model_provider = "voidRoute"\n` + tomlContent;
-          
-          if (tomlContent.match(/^model\s*=/m)) tomlContent = tomlContent.replace(/^model\s*=\s*".*"/m, `model = "${selectedModel}"`);
-          else tomlContent = `model = "${selectedModel}"\n` + tomlContent;
-
-          if (!tomlContent.includes('[model_providers.voidRoute]')) {
-            tomlContent += `\n[model_providers.voidRoute]\nname = "voidRoute"\nbase_url = "${endpoint}"\nwire_api = "responses"\n`;
-          }
-          fs.writeFileSync(cxConfig, tomlContent.trim() + '\n');
-          let authData = {};
-          if (fs.existsSync(cxAuth)) { try { authData = JSON.parse(fs.readFileSync(cxAuth, 'utf8')); } catch (e) {} }
-          authData.OPENAI_API_KEY = "sk_voidRoute"; authData.auth_mode = "apikey";
-          fs.writeFileSync(cxAuth, JSON.stringify(authData, null, 2));
-          console.log(chalk.green(`  ✅ Successfully updated ${cxConfig}`));
-          console.log(chalk.yellow(`  ⚠️  Note: The Codex app only supports a single custom model at a time.`));
-          console.log(chalk.yellow(`      It will display as "Custom Model" in the app UI, but will route correctly.`));
-        } catch (e) { console.log(chalk.red(`  ❌ Failed to write config: ${e.message}`)); }
+      try {
+        if (action === 'reset') await codexAdapter.resetConfig();
+        else await codexAdapter.applyConfig(selectedModel, endpoint);
+      } catch (e) {
+        console.log(chalk.red(`  ❌ Codex configuration failed: ${e.message}`));
       }
     }
     // ──── AIDER ───────────────────────────────────────────────────────────
