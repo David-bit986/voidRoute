@@ -10,6 +10,7 @@ import { handleChat } from './src/sse/handlers/chat.js';
 import { initTranslators } from '#open-sse/translator/index.js';
 import { setupCLI } from './cli-ui.js';
 import { initConsoleLogCapture } from './src/lib/consoleLogBuffer.js';
+import { buildModelsResponse, discoverProviderModels } from './src/lib/providerModels.js';
 
 const app = express();
 app.use(cors());
@@ -31,27 +32,8 @@ function createNextRequest(req) {
 
 app.get('/v1/models', async (req, res) => {
   try {
-    const { getProviderConnections } = await import('#lib/localDb.js');
-    const { PROVIDER_MODELS } = await import('./open-sse/config/providerModels.js');
-    const { getProviderAlias } = await import('./src/shared/constants/providers.js');
-    
-    const connections = await getProviderConnections();
-    const modelsList = [];
-    
-    for (const conn of connections) {
-      const list = PROVIDER_MODELS[conn.providerId];
-      if (list) {
-        for (const m of list) {
-          const alias = getProviderAlias ? getProviderAlias(conn.providerId) : conn.providerId;
-          const id = alias ? `${alias}/${m}` : m;
-          if (!modelsList.find(x => x.id === id)) {
-            modelsList.push({ id, object: 'model', created: Date.now(), owned_by: 'voidRoute' });
-          }
-        }
-      }
-    }
-    
-    res.json({ object: 'list', data: modelsList });
+    const { models } = await discoverProviderModels();
+    res.json(buildModelsResponse(models));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

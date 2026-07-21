@@ -26,6 +26,7 @@ import {
 import { generatePKCE } from './src/lib/oauth/utils/pkce.js';
 import { getProviderAlias, AI_PROVIDERS } from './src/shared/constants/providers.js';
 import { getConsoleLogs, getConsoleEmitter } from './src/lib/consoleLogBuffer.js';
+import { fetchProviderModels } from './src/lib/providerModels.js';
 
 // ─── Provider Classification ────────────────────────────────────────────────
 // Providers that use OAuth / device-code flows (NOT simple API keys)
@@ -98,114 +99,6 @@ function resizeAscii(asciiStr, targetWidth, targetHeight = null) {
     newLines.push(newLine);
   }
   return newLines;
-}
-
-async function fetchProviderModels(providerId, conn) {
-  if (!conn) return [];
-  try {
-    let url = '';
-    let headers = { 'Accept': 'application/json' };
-
-    if (providerId === 'openai') {
-      url = 'https://api.openai.com/v1/models';
-      headers['Authorization'] = `Bearer ${conn.apiKey}`;
-    } else if (providerId === 'openrouter') {
-      url = 'https://openrouter.ai/api/v1/models';
-      if (conn.apiKey) headers['Authorization'] = `Bearer ${conn.apiKey}`;
-    } else if (providerId === 'deepseek') {
-      url = 'https://api.deepseek.com/models';
-      headers['Authorization'] = `Bearer ${conn.apiKey}`;
-    } else if (providerId === 'siliconflow') {
-      url = 'https://api.siliconflow.cn/v1/models';
-      headers['Authorization'] = `Bearer ${conn.apiKey}`;
-    } else if (providerId === 'groq') {
-      url = 'https://api.groq.com/openai/v1/models';
-      headers['Authorization'] = `Bearer ${conn.apiKey}`;
-    } else if (providerId === 'together') {
-      url = 'https://api.together.xyz/v1/models';
-      headers['Authorization'] = `Bearer ${conn.apiKey}`;
-    } else if (providerId === 'gemini') {
-      const key = conn.apiKey || conn.accessToken;
-      if (key) {
-        url = `https://generativelanguage.googleapis.com/v1beta/models?key=${key}`;
-      }
-    } else if (providerId === 'anthropic') {
-      url = 'https://api.anthropic.com/v1/models';
-      headers['x-api-key'] = conn.apiKey;
-      headers['anthropic-version'] = '2023-06-01';
-    } else if (providerId === 'ollama') {
-      url = 'http://localhost:11434/api/tags';
-    } else if (providerId === 'mistral') {
-      url = 'https://api.mistral.ai/v1/models';
-      headers['Authorization'] = `Bearer ${conn.apiKey}`;
-    } else {
-      const definition = PROVIDER_ENDPOINTS[providerId];
-      let base = '';
-      if (definition && definition.baseUrl) {
-        base = definition.baseUrl;
-      } else if (providerId.startsWith('openai-compatible-')) {
-        const { getProviderNodeById } = await import('./src/lib/localDb.js');
-        const node = await getProviderNodeById(providerId);
-        if (node && node.baseUrl) {
-          base = node.baseUrl;
-        }
-      } else if (conn?.providerSpecificData?.baseUrl) {
-        base = conn.providerSpecificData.baseUrl;
-      }
-
-      if (base) {
-        if (base.endsWith('/chat/completions')) {
-          base = base.replace(/\/chat\/completions$/, '');
-        } else if (base.endsWith('/messages')) {
-          base = base.replace(/\/messages$/, '');
-        }
-        
-        if (base.endsWith('/v1')) {
-          url = `${base}/models`;
-        } else if (base.includes('/v1/')) {
-          url = base.split('/v1/')[0] + '/v1/models';
-        } else {
-          url = `${base}/models`;
-        }
-
-        if (conn.apiKey && conn.apiKey !== 'local-no-key') {
-          headers['Authorization'] = `Bearer ${conn.apiKey}`;
-        }
-      }
-    }
-
-    if (!url) return [];
-
-    const res = await fetch(url, { headers, signal: AbortSignal.timeout(5000) });
-    if (!res.ok) {
-      return [];
-    }
-
-    const data = await res.json();
-    
-    if (providerId === 'ollama') {
-      if (data && Array.isArray(data.models)) {
-        return data.models.map(m => ({ id: m.name, name: m.name }));
-      }
-    } else if (providerId === 'gemini') {
-      if (data && Array.isArray(data.models)) {
-        return data.models
-          .filter(m => m.name && m.name.startsWith('models/'))
-          .map(m => {
-            const cleanId = m.name.replace(/^models\//, '');
-            return { id: cleanId, name: m.displayName || cleanId };
-          });
-      }
-    } else if (data && Array.isArray(data.data)) {
-      return data.data.map(m => ({ id: m.id, name: m.id }));
-    } else if (data && Array.isArray(data)) {
-      return data.map(m => (typeof m === 'string' ? { id: m, name: m } : { id: m.id || m.name, name: m.name || m.id }));
-    }
-    
-    return [];
-  } catch (err) {
-    return [];
-  }
 }
 
 // ─── Local OAuth Callback Server ────────────────────────────────────────────
