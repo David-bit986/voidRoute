@@ -8,7 +8,8 @@
     "#*": "./src/*"
   },
   "scripts": {
-    "start": "bun run index.js"
+    "start": "bun run index.js",
+    "test": "bun test"
   },
   "dependencies": {
     "@inquirer/search": "4.2.1",
