@@ -14,6 +14,23 @@ const BEARER_MODEL_ENDPOINTS = {
   mistral: "https://api.mistral.ai/v1/models",
 };
 
+function normalizeProviderModel(model) {
+  if (typeof model === "string") {
+    return { id: model, name: model };
+  }
+
+  const id = model?.id || model?.name;
+  if (!id) {
+    return null;
+  }
+
+  return {
+    id,
+    name: model.name || id,
+    ...(model.type ? { type: model.type } : {}),
+  };
+}
+
 export async function fetchProviderModels(
   providerId,
   connection,
@@ -125,12 +142,13 @@ export async function fetchProviderModels(
       : [];
   }
 
-  return Array.isArray(body?.data)
-    ? body.data.map((model) => ({
-        id: model.id,
-        name: model.name || model.id,
-      }))
-    : [];
+  const providerModels = Array.isArray(body?.data)
+    ? body.data
+    : Array.isArray(body)
+      ? body
+      : [];
+
+  return providerModels.map(normalizeProviderModel).filter(Boolean);
 }
 
 export async function discoverProviderModels(options = {}) {

@@ -116,6 +116,48 @@ describe("provider model discovery", () => {
     });
   });
 
+  test("normalizes a top-level model array without losing model types", async () => {
+    const models = await fetchProviderModels(
+      "openai-compatible-local",
+      {
+        providerSpecificData: { baseUrl: "https://example.test/v1" },
+      },
+      {
+        fetchImpl: async () => Response.json([
+          "plain-model",
+          { id: "chat-model", name: "Chat Model", type: "llm" },
+          { name: "embed-model", type: "embedding" },
+        ]),
+      },
+    );
+
+    expect(models).toEqual([
+      { id: "plain-model", name: "plain-model" },
+      { id: "chat-model", name: "Chat Model", type: "llm" },
+      { id: "embed-model", name: "embed-model", type: "embedding" },
+    ]);
+  });
+
+  test("preserves model types from an OpenAI-style data envelope", async () => {
+    const models = await fetchProviderModels(
+      "openrouter",
+      { apiKey: "test-key" },
+      {
+        fetchImpl: async () => Response.json({
+          data: [{ id: "embedding-model", type: "embedding" }],
+        }),
+      },
+    );
+
+    expect(models).toEqual([
+      {
+        id: "embedding-model",
+        name: "embedding-model",
+        type: "embedding",
+      },
+    ]);
+  });
+
   test.each([
     [
       "openai",

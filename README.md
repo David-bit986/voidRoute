@@ -25,7 +25,7 @@ This project uses the database schema, token rotation, and SSE proxy backend fro
   * **Claude Code** (`~/.claude/settings.json`)
   * **OpenClaude** (`~/.openclaude/settings.json`) — uses OpenAI-compatible routing for non-Anthropic models
   * **OpenCode** (`~/.config/opencode/opencode.json`) — **multi-model** capable
-  * **OpenAI Codex** (`~/.codex/config.toml`)
+  * **OpenAI Codex** (`~/.codex/config.toml`) — adds all active LLMs to the Codex model picker
   * **Aider** (`~/.aider.conf.yml`)
   * **Pi Agent** (`~/.pi/agent/models.json`) — **multi-model** capable
   * **Cline** (`~/.cline/data/globalState.json`)
@@ -43,12 +43,20 @@ This project uses the database schema, token rotation, and SSE proxy backend fro
 | **OpenClaude** | Single | Smart routing: non-Anthropic models use OpenAI-compatible mode |
 | **OpenCode** | **Multi** ✅ | Registers all models under `provider.voidRoute.models` |
 | **Pi Agent** | **Multi** ✅ | Registers all models under `providers.voidRoute.models` |
-| **OpenAI Codex** | Single | Sets 1 model in `config.toml` |
+| **OpenAI Codex** | **Multi** ✅ | Generates a catalog containing native Codex models plus every active voidRoute LLM |
 | **Aider** | Single | Sets 1 model in `.aider.conf.yml` |
 | **Cline** | Single | Sets 1 model in `globalState.json` |
 | **Cursor** | — | Manual configuration required |
 
 When you select a tool that supports multi-model, you'll be asked: *"Register ALL N models from this provider?"* If you say yes, every model from that provider gets written into the config — no need to manually add them one by one.
+
+### Codex model picker
+
+Choose **CLI Tools → OpenAI Codex**, select the model that should be the default, and restart Codex after setup. VoidRoute discovers LLMs from every active provider connection and adds them as individual entries in the Codex app model picker; it no longer exposes only one generic “Custom Model.” Native Codex entries remain available.
+
+Provider model IDs containing `/` use an unambiguous picker-safe alias. For example, OpenRouter's `moonshotai/kimi-k3` appears as `openrouter/moonshotai-kimi-k3`, but VoidRoute sends the exact native `moonshotai/kimi-k3` ID upstream. Ambiguous aliases are skipped instead of being routed incorrectly.
+
+Codex setup respects `CODEX_HOME`, preserves `auth.json` and `models_cache.json`, and records the files it manages so **Reset** can restore their previous contents. Reset pauses if one of those managed files was edited after setup rather than overwriting the later edit.
 
 ---
 
