@@ -34,8 +34,8 @@ When the user configures Codex through voidRoute:
 2. It writes a Codex-shaped catalog to `$CODEX_HOME/voidroute-catalog.json`.
 3. It writes an exact alias map to `$CODEX_HOME/voidroute-model-map.json`.
 4. It injects the catalog path and dedicated provider into `$CODEX_HOME/config.toml`.
-5. It makes `$CODEX_HOME/models_cache.json` stale so Codex reloads the catalog.
-6. Codex App/CLI shows the routed entries in its standard picker.
+5. It tells the user to restart Codex because `model_catalog_json` is loaded at startup.
+6. After restart, Codex App/CLI shows the routed entries in its standard picker.
 
 The selected model remains the default, but the user may switch to any other synchronized voidRoute entry directly from Codex.
 
@@ -112,14 +112,14 @@ The dedicated provider will be:
 name = "voidRoute"
 base_url = "http://127.0.0.1:20130/v1"
 wire_api = "responses"
-requires_openai_auth = true
+requires_openai_auth = false
 ```
 
 Injection will preserve unrelated root keys, tables, comments, and the file’s dominant line ending. Repeated synchronization will update one managed block instead of duplicating keys or sections.
 
 The new flow will not write `OPENAI_API_KEY`, `auth_mode`, or any other field in Codex’s `auth.json`. Existing cleanup for the legacy `sk_voidRoute` placeholder will remain available during reset.
 
-### 5. Backup, restore, and cache refresh
+### 5. Backup, restore, and reload
 
 Before the first injection, voidRoute will save the original Codex integration state under `$CODEX_HOME` in a voidRoute-owned backup file. The backup will contain only the data required to restore:
 
@@ -130,7 +130,7 @@ Before the first injection, voidRoute will save the original Codex integration s
 
 Reset will restore those values, remove only voidRoute-owned generated catalog/map files, and preserve user changes that do not overlap the managed keys.
 
-After sync or reset, voidRoute will rewrite `models_cache.json` with a deliberately stale wrapper using the active catalog models. This makes the next Codex model refresh read the new state without waiting for the normal cache TTL.
+voidRoute will not edit `models_cache.json`. When `model_catalog_json` is configured, current Codex builds use the custom catalog as an authoritative startup-only source and bypass the normal remote-model cache. After sync or reset, the TUI will tell the user to restart Codex.
 
 Generated files will be written atomically through a temporary sibling followed by rename, preventing partial JSON or TOML if the process is interrupted.
 
@@ -153,7 +153,7 @@ clone native Codex template into routed catalog entries
         +--> voidroute-catalog.json
         +--> voidroute-model-map.json
         +--> config.toml managed keys/provider
-        +--> stale models_cache.json
+        +--> restart-required status
 
 Codex request model
         |
@@ -207,4 +207,4 @@ The repository will gain an explicit `test` script so `bun test` is a meaningful
 
 ## Rollout
 
-The first release will synchronize during Codex configuration and expose a reusable sync function for later CLI/dashboard wiring. If users need automatic refresh while voidRoute is already running, a dedicated command or dashboard action can call the same function without changing the catalog format.
+The first release will synchronize during Codex configuration and expose a reusable sync function for later CLI/dashboard wiring. If users need refresh while voidRoute is already running, a dedicated command or dashboard action can regenerate the same catalog; Codex must then be restarted because the catalog override is loaded at startup.
