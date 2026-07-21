@@ -26,6 +26,9 @@ import {
 import { generatePKCE } from './src/lib/oauth/utils/pkce.js';
 import { getProviderAlias, AI_PROVIDERS } from './src/shared/constants/providers.js';
 import { getConsoleLogs, getConsoleEmitter } from './src/lib/consoleLogBuffer.js';
+import { fetchProviderModels } from './src/lib/providerModels.js';
+import { CodexAdapter } from './src/lib/cli-config/CodexAdapter.js';
+import { inspectCodexIntegration } from './src/lib/codex/integration.js';
 
 // ─── Provider Classification ────────────────────────────────────────────────
 // Providers that use OAuth / device-code flows (NOT simple API keys)
@@ -98,114 +101,6 @@ function resizeAscii(asciiStr, targetWidth, targetHeight = null) {
     newLines.push(newLine);
   }
   return newLines;
-}
-
-async function fetchProviderModels(providerId, conn) {
-  if (!conn) return [];
-  try {
-    let url = '';
-    let headers = { 'Accept': 'application/json' };
-
-    if (providerId === 'openai') {
-      url = 'https://api.openai.com/v1/models';
-      headers['Authorization'] = `Bearer ${conn.apiKey}`;
-    } else if (providerId === 'openrouter') {
-      url = 'https://openrouter.ai/api/v1/models';
-      if (conn.apiKey) headers['Authorization'] = `Bearer ${conn.apiKey}`;
-    } else if (providerId === 'deepseek') {
-      url = 'https://api.deepseek.com/models';
-      headers['Authorization'] = `Bearer ${conn.apiKey}`;
-    } else if (providerId === 'siliconflow') {
-      url = 'https://api.siliconflow.cn/v1/models';
-      headers['Authorization'] = `Bearer ${conn.apiKey}`;
-    } else if (providerId === 'groq') {
-      url = 'https://api.groq.com/openai/v1/models';
-      headers['Authorization'] = `Bearer ${conn.apiKey}`;
-    } else if (providerId === 'together') {
-      url = 'https://api.together.xyz/v1/models';
-      headers['Authorization'] = `Bearer ${conn.apiKey}`;
-    } else if (providerId === 'gemini') {
-      const key = conn.apiKey || conn.accessToken;
-      if (key) {
-        url = `https://generativelanguage.googleapis.com/v1beta/models?key=${key}`;
-      }
-    } else if (providerId === 'anthropic') {
-      url = 'https://api.anthropic.com/v1/models';
-      headers['x-api-key'] = conn.apiKey;
-      headers['anthropic-version'] = '2023-06-01';
-    } else if (providerId === 'ollama') {
-      url = 'http://localhost:11434/api/tags';
-    } else if (providerId === 'mistral') {
-      url = 'https://api.mistral.ai/v1/models';
-      headers['Authorization'] = `Bearer ${conn.apiKey}`;
-    } else {
-      const definition = PROVIDER_ENDPOINTS[providerId];
-      let base = '';
-      if (definition && definition.baseUrl) {
-        base = definition.baseUrl;
-      } else if (providerId.startsWith('openai-compatible-')) {
-        const { getProviderNodeById } = await import('./src/lib/localDb.js');
-        const node = await getProviderNodeById(providerId);
-        if (node && node.baseUrl) {
-          base = node.baseUrl;
-        }
-      } else if (conn?.providerSpecificData?.baseUrl) {
-        base = conn.providerSpecificData.baseUrl;
-      }
-
-      if (base) {
-        if (base.endsWith('/chat/completions')) {
-          base = base.replace(/\/chat\/completions$/, '');
-        } else if (base.endsWith('/messages')) {
-          base = base.replace(/\/messages$/, '');
-        }
-        
-        if (base.endsWith('/v1')) {
-          url = `${base}/models`;
-        } else if (base.includes('/v1/')) {
-          url = base.split('/v1/')[0] + '/v1/models';
-        } else {
-          url = `${base}/models`;
-        }
-
-        if (conn.apiKey && conn.apiKey !== 'local-no-key') {
-          headers['Authorization'] = `Bearer ${conn.apiKey}`;
-        }
-      }
-    }
-
-    if (!url) return [];
-
-    const res = await fetch(url, { headers, signal: AbortSignal.timeout(5000) });
-    if (!res.ok) {
-      return [];
-    }
-
-    const data = await res.json();
-    
-    if (providerId === 'ollama') {
-      if (data && Array.isArray(data.models)) {
-        return data.models.map(m => ({ id: m.name, name: m.name }));
-      }
-    } else if (providerId === 'gemini') {
-      if (data && Array.isArray(data.models)) {
-        return data.models
-          .filter(m => m.name && m.name.startsWith('models/'))
-          .map(m => {
-            const cleanId = m.name.replace(/^models\//, '');
-            return { id: cleanId, name: m.displayName || cleanId };
-          });
-      }
-    } else if (data && Array.isArray(data.data)) {
-      return data.data.map(m => ({ id: m.id, name: m.id }));
-    } else if (data && Array.isArray(data)) {
-      return data.map(m => (typeof m === 'string' ? { id: m, name: m } : { id: m.id || m.name, name: m.name || m.id }));
-    }
-    
-    return [];
-  } catch (err) {
-    return [];
-  }
 }
 
 // ─── Local OAuth Callback Server ────────────────────────────────────────────
@@ -1299,6 +1194,7 @@ async function manageSettings() {
 export async function manageCliTools(port) {
   const endpoint = `http://localhost:${port}/v1`;
   const endpointNoV1 = `http://localhost:${port}`;
+  const codexAdapter = new CodexAdapter();
   
   // Helper: detect if a tool already has voidRoute config
   function detectStatus(tool) {
@@ -1318,10 +1214,15 @@ export async function manageCliTools(port) {
         return s?.provider?.['voidRoute'] ? 'connected' : null;
       }
       if (tool === 'codex') {
-        const paths = resolveConfigPath('codex');
-        const found = paths.find(p => fs.existsSync(p));
-        if (!found) return null;
-        return fs.readFileSync(found, 'utf8').includes('voidRoute') ? 'connected' : null;
+        const paths = codexAdapter.paths;
+        if (!fs.existsSync(paths.config) || !fs.existsSync(paths.catalog) || !fs.existsSync(paths.modelMap)) return null;
+        const status = inspectCodexIntegration({
+          config: fs.readFileSync(paths.config, 'utf8'),
+          catalog: JSON.parse(fs.readFileSync(paths.catalog, 'utf8')),
+          modelMap: JSON.parse(fs.readFileSync(paths.modelMap, 'utf8')),
+          catalogPath: paths.catalog,
+        });
+        return status.connected ? 'connected' : null;
       }
       if (tool === 'aider') {
         const paths = resolveConfigPath('aider');
@@ -1361,7 +1262,7 @@ export async function manageCliTools(port) {
         path.join(home, '.config', 'opencode-profiles', 'default', 'opencode.json'),
       ];
       case 'codex': return [
-        path.join(home, '.codex', 'config.toml'),
+        ...codexAdapter.resolveConfigPath(),
       ];
       case 'aider': return [
         path.join(home, '.aider.conf.yml'),
@@ -1434,9 +1335,16 @@ export async function manageCliTools(port) {
     let allModelsForPi = true; // Pi Agent registers all by default
     
     if (action === 'apply' && tool !== 'manual') {
-      const connections = await getProviderConnections();
+      const allConnections = await getProviderConnections();
+      const connections = tool === 'codex'
+        ? allConnections.filter(connection => connection.isActive)
+        : allConnections;
       if (connections.length === 0) {
-        console.log(chalk.red('  ❌ No providers added yet. Please add a provider first.'));
+        console.log(chalk.red(
+          tool === 'codex'
+            ? '  ❌ No active providers are available for the Codex picker.'
+            : '  ❌ No providers added yet. Please add a provider first.'
+        ));
         continue;
       }
       
@@ -1707,54 +1615,11 @@ export async function manageCliTools(port) {
     }
     // ──── CODEX ───────────────────────────────────────────────────────────
     else if (tool === 'codex') {
-      const cxDir = path.join(os.homedir(), '.codex');
-      const cxConfig = path.join(cxDir, 'config.toml');
-      const cxAuth = path.join(cxDir, 'auth.json');
-      
-      if (action === 'reset') {
-        try {
-          if (fs.existsSync(cxConfig)) {
-            let toml = fs.readFileSync(cxConfig, 'utf8');
-            toml = toml.replace(/\[model_providers\.voidRoute\][\s\S]*?(?=\n\[|$)/g, '');
-            if (toml.match(/model_provider\s*=\s*"voidRoute"/)) {
-              toml = toml.replace(/model_provider\s*=\s*"voidRoute"/, '');
-              toml = toml.replace(/^model\s*=.*$/m, '');
-            }
-            fs.writeFileSync(cxConfig, toml.replace(/\n{3,}/g, '\n\n').trim() + '\n');
-          }
-          if (fs.existsSync(cxAuth)) {
-            let auth = JSON.parse(fs.readFileSync(cxAuth, 'utf8'));
-            if (auth.auth_mode === 'apikey' && auth.OPENAI_API_KEY === 'sk_voidRoute') {
-              delete auth.OPENAI_API_KEY;
-              delete auth.auth_mode;
-            }
-            fs.writeFileSync(cxAuth, JSON.stringify(auth, null, 2));
-          }
-          console.log(chalk.green(`  ✅ voidRoute config removed from Codex.`));
-        } catch (e) { console.log(chalk.red(`  ❌ ${e.message}`)); }
-      } else {
-        try {
-          if (!fs.existsSync(cxDir)) fs.mkdirSync(cxDir, { recursive: true });
-          let tomlContent = fs.existsSync(cxConfig) ? fs.readFileSync(cxConfig, 'utf8') : '';
-          
-          if (tomlContent.match(/model_provider\s*=/)) tomlContent = tomlContent.replace(/model_provider\s*=\s*".*"/, `model_provider = "voidRoute"`);
-          else tomlContent = `model_provider = "voidRoute"\n` + tomlContent;
-          
-          if (tomlContent.match(/^model\s*=/m)) tomlContent = tomlContent.replace(/^model\s*=\s*".*"/m, `model = "${selectedModel}"`);
-          else tomlContent = `model = "${selectedModel}"\n` + tomlContent;
-
-          if (!tomlContent.includes('[model_providers.voidRoute]')) {
-            tomlContent += `\n[model_providers.voidRoute]\nname = "voidRoute"\nbase_url = "${endpoint}"\nwire_api = "responses"\n`;
-          }
-          fs.writeFileSync(cxConfig, tomlContent.trim() + '\n');
-          let authData = {};
-          if (fs.existsSync(cxAuth)) { try { authData = JSON.parse(fs.readFileSync(cxAuth, 'utf8')); } catch (e) {} }
-          authData.OPENAI_API_KEY = "sk_voidRoute"; authData.auth_mode = "apikey";
-          fs.writeFileSync(cxAuth, JSON.stringify(authData, null, 2));
-          console.log(chalk.green(`  ✅ Successfully updated ${cxConfig}`));
-          console.log(chalk.yellow(`  ⚠️  Note: The Codex app only supports a single custom model at a time.`));
-          console.log(chalk.yellow(`      It will display as "Custom Model" in the app UI, but will route correctly.`));
-        } catch (e) { console.log(chalk.red(`  ❌ Failed to write config: ${e.message}`)); }
+      try {
+        if (action === 'reset') await codexAdapter.resetConfig();
+        else await codexAdapter.applyConfig(selectedModel, endpoint);
+      } catch (e) {
+        console.log(chalk.red(`  ❌ Codex configuration failed: ${e.message}`));
       }
     }
     // ──── AIDER ───────────────────────────────────────────────────────────

@@ -4,6 +4,7 @@ node_modules/
 *.sqlite
 *.db
 scratch/
+.worktrees/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
