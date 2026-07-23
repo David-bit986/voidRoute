@@ -10,8 +10,10 @@ import {
 import {
   cleanLegacyCodexAuth,
   injectCodexConfig,
+  MANAGED_BASE_URL_MARKER,
   readCodexRootValues,
 } from "./configToml.js";
+import { migrateLegacyCodexHistory } from "./history.js";
 import { buildRestorePlan, createCodexJournal } from "./journal.js";
 import { getCodexPaths } from "./paths.js";
 
@@ -146,6 +148,7 @@ export async function syncCodexIntegration({
   await writeFileAtomic(paths.state, jsonText(journal));
   await writeCodexCatalogArtifacts({ paths, artifacts });
   await writeFileAtomic(paths.config, configAfter);
+  const historyMigration = await migrateLegacyCodexHistory({ paths });
 
   return {
     configuredModel,
@@ -153,6 +156,7 @@ export async function syncCodexIntegration({
     nativeModelCount: baselineResult.catalog.models.length,
     diagnostics: discovery.diagnostics ?? [],
     collisions: artifacts.collisions,
+    historyMigration,
     restartRequired: true,
   };
 }
@@ -246,8 +250,8 @@ export function inspectCodexIntegration({
     : 0;
   const configuredModel = roots.model;
   const connected = Boolean(
-    config?.includes("[model_providers.voidRoute]") &&
-    roots.model_provider === "voidRoute" &&
+    config?.includes(MANAGED_BASE_URL_MARKER) &&
+    roots.openai_base_url &&
     roots.model_catalog_json === catalogPath &&
     configuredModel &&
     modelMap?.models?.[configuredModel] &&

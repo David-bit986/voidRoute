@@ -17,5 +17,6 @@ export function getCodexPaths(options = {}) {
     backup: path.join(home, "voidroute-catalog.backup.json"),
     modelsCache: path.join(home, "models_cache.json"),
     auth: path.join(home, "auth.json"),
+    historyDb: path.join(home, "state_5.sqlite"),
   };
 }

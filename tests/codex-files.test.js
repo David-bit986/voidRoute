@@ -36,6 +36,7 @@ describe("Codex integration files", () => {
       backup: path.join(codexHome, "voidroute-catalog.backup.json"),
       modelsCache: path.join(codexHome, "models_cache.json"),
       auth: path.join(codexHome, "auth.json"),
+      historyDb: path.join(codexHome, "state_5.sqlite"),
     });
   });
 

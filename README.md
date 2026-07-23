@@ -52,11 +52,11 @@ When you select a tool that supports multi-model, you'll be asked: *"Register AL
 
 ### Codex model picker
 
-Choose **CLI Tools → OpenAI Codex**, select the model that should be the default, and restart Codex after setup. VoidRoute discovers LLMs from every active provider connection and adds them as individual entries in the Codex app model picker; it no longer exposes only one generic “Custom Model.” Native Codex entries remain available.
+Choose **CLI Tools → OpenAI Codex**, select the model that should be the default, and restart Codex after setup. VoidRoute discovers LLMs from every active provider connection and adds them as individual entries in the Codex app model picker. It routes the local loopback through Codex's built-in `openai` provider, so native GPT entries and existing chats keep their normal provider identity.
 
 Provider model IDs containing `/` use an unambiguous picker-safe alias. For example, OpenRouter's `moonshotai/kimi-k3` appears as `openrouter/moonshotai-kimi-k3`, but VoidRoute sends the exact native `moonshotai/kimi-k3` ID upstream. Ambiguous aliases are skipped instead of being routed incorrectly.
 
-Codex setup respects `CODEX_HOME`, preserves `auth.json` and `models_cache.json`, and records the files it manages so **Reset** can restore their previous contents. Reset pauses if one of those managed files was edited after setup rather than overwriting the later edit.
+Codex setup respects `CODEX_HOME`, preserves `auth.json` and `models_cache.json`, and records the files it manages so **Reset** can restore their previous contents. If an earlier VoidRoute setup tagged chats with the legacy `voidRoute` provider, the next setup migrates those thread tags back to native `openai` when the Codex database is available. Reset pauses if one of those managed files was edited after setup rather than overwriting the later edit.
 
 ---
 
