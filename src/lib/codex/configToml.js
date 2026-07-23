@@ -4,6 +4,8 @@ const MANAGED_ROOT_KEYS = new Set([
   "model_catalog_json",
 ]);
 const MANAGED_PROVIDER_HEADER = "[model_providers.voidRoute]";
+export const MANAGED_BASE_URL_MARKER = "# Auto-injected by voidRoute";
+const READABLE_ROOT_KEYS = new Set([...MANAGED_ROOT_KEYS, "openai_base_url"]);
 
 function tomlString(value) {
   return JSON.stringify(String(value));
@@ -44,7 +46,7 @@ export function readCodexRootValues(source) {
       break;
     }
     const match = /^\s*([A-Za-z0-9_-]+)\s*=\s*(.*)$/.exec(line);
-    if (!match || !MANAGED_ROOT_KEYS.has(match[1])) {
+    if (!match || !READABLE_ROOT_KEYS.has(match[1])) {
       continue;
     }
     const value = parseTomlString(match[2]);
@@ -79,10 +81,30 @@ function removeManagedProviderBlock(lines) {
   return output;
 }
 
+function removeManagedBaseUrl(lines) {
+  const firstTableIndex = lines.findIndex(isTableHeader);
+  const rootEnd = firstTableIndex === -1 ? lines.length : firstTableIndex;
+  const output = [];
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (index < rootEnd && line.trim() === MANAGED_BASE_URL_MARKER) {
+      const next = lines[index + 1] ?? "";
+      if (/^\s*openai_base_url\s*=/.test(next)) index += 1;
+      continue;
+    }
+    output.push(line);
+  }
+
+  return output;
+}
+
 export function injectCodexConfig(source, { model, catalogPath, baseUrl }) {
   const eol = source.includes("\r\n") ? "\r\n" : "\n";
   const normalized = source.replace(/\r\n/g, "\n");
-  const withoutProvider = removeManagedProviderBlock(normalized.split("\n"));
+  const withoutProvider = removeManagedBaseUrl(
+    removeManagedProviderBlock(normalized.split("\n")),
+  );
   const firstTableIndex = withoutProvider.findIndex(isTableHeader);
   const rootEnd = firstTableIndex === -1 ? withoutProvider.length : firstTableIndex;
   const root = withoutProvider
@@ -100,21 +122,18 @@ export function injectCodexConfig(source, { model, catalogPath, baseUrl }) {
   const output = [
     ...root,
     `model = ${tomlString(model)}`,
-    'model_provider = "voidRoute"',
     `model_catalog_json = ${tomlString(catalogPath)}`,
   ];
+  if (!root.some((line) => rootAssignmentKey(line) === "openai_base_url")) {
+    output.push(
+      MANAGED_BASE_URL_MARKER,
+      `openai_base_url = ${tomlString(baseUrl)}`,
+    );
+  }
   if (tables.length > 0) {
     output.push("", ...tables);
   }
-  output.push(
-    "",
-    MANAGED_PROVIDER_HEADER,
-    'name = "voidRoute"',
-    `base_url = ${tomlString(baseUrl)}`,
-    'wire_api = "responses"',
-    "requires_openai_auth = false",
-    "",
-  );
+  output.push("");
 
   return output.join(eol);
 }

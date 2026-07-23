@@ -62,6 +62,20 @@ export class CodexAdapter extends BaseAdapter {
       ),
     );
     console.log(chalk.gray(`     Default: ${result.configuredModel}`));
+    if (result.historyMigration?.rows > 0) {
+      console.log(
+        chalk.green(
+          `  Restored ${result.historyMigration.rows} legacy chat(s) to native Codex history.`,
+        ),
+      );
+    }
+    if (result.historyMigration?.deferred) {
+      console.log(
+        chalk.yellow(
+          "  Codex history is locked; close Codex and run this setup again to restore old chats.",
+        ),
+      );
+    }
     if (result.diagnostics.length > 0) {
       console.log(
         chalk.yellow(

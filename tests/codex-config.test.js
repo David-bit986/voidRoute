@@ -7,7 +7,7 @@ import {
 } from "../src/lib/codex/configToml.js";
 
 describe("Codex TOML integration", () => {
-  test("places managed root keys before tables and emits a strict provider block", () => {
+  test("routes through native Codex while preserving the built-in provider", () => {
     const original = [
       "# user comment",
       "[features]",
@@ -28,20 +28,15 @@ describe("Codex TOML integration", () => {
       [
         "# user comment",
         'model = "openrouter/moonshotai-kimi-k3"',
-        'model_provider = "voidRoute"',
         'model_catalog_json = "C:\\\\Codex\\\\voidroute-catalog.json"',
+        "# Auto-injected by voidRoute",
+        'openai_base_url = "http://127.0.0.1:20130/v1"',
         "",
         "[features]",
         "multi_agent = true",
         "",
         "[projects.'C:\\\\work']",
         "trust_level = \"trusted\"",
-        "",
-        "[model_providers.voidRoute]",
-        'name = "voidRoute"',
-        'base_url = "http://127.0.0.1:20130/v1"',
-        'wire_api = "responses"',
-        "requires_openai_auth = false",
         "",
       ].join("\r\n"),
     );
@@ -64,6 +59,7 @@ describe("Codex TOML integration", () => {
       rootModelCount: (second.match(/^model\s*=/gm) || []).length,
       providerCount: (second.match(/^\[model_providers\.voidRoute\]$/gm) || [])
         .length,
+      baseUrlCount: (second.match(/^openai_base_url\s*=/gm) || []).length,
     }).toEqual({
       second: injectCodexConfig(second, {
         model: "openrouter/moonshotai-kimi-k3",
@@ -71,7 +67,8 @@ describe("Codex TOML integration", () => {
         baseUrl: "http://localhost:20130/v1",
       }),
       rootModelCount: 1,
-      providerCount: 1,
+      providerCount: 0,
+      baseUrlCount: 1,
     });
   });
 
@@ -100,6 +97,7 @@ describe("Codex TOML integration", () => {
     const source = [
       'model = "gpt-native"',
       'model_catalog_json = "C:\\\\catalog.json"',
+      'openai_base_url = "http://127.0.0.1:20130/v1"',
       "[profiles.work]",
       'model = "profile-model"',
       'model_provider = "profile-provider"',
@@ -108,6 +106,52 @@ describe("Codex TOML integration", () => {
     expect(readCodexRootValues(source)).toEqual({
       model: "gpt-native",
       model_catalog_json: "C:\\catalog.json",
+      openai_base_url: "http://127.0.0.1:20130/v1",
     });
+  });
+
+  test("removes a legacy custom provider without changing native tables", () => {
+    const legacy = [
+      'model = "openrouter/moonshotai-kimi-k3"',
+      'model_provider = "voidRoute"',
+      'model_catalog_json = "C:\\old.json"',
+      "",
+      "[features]",
+      "multi_agent = true",
+      "",
+      "[model_providers.voidRoute]",
+      'name = "voidRoute"',
+      'base_url = "http://127.0.0.1:20130/v1"',
+      'wire_api = "responses"',
+      "requires_openai_auth = false",
+    ].join("\n");
+
+    const updated = injectCodexConfig(legacy, {
+      model: "openrouter/moonshotai-kimi-k3",
+      catalogPath: "C:\\new.json",
+      baseUrl: "http://127.0.0.1:20130/v1",
+    });
+
+    expect(updated).not.toContain('model_provider = "voidRoute"');
+    expect(updated).not.toContain("[model_providers.voidRoute]");
+    expect(updated).toContain('openai_base_url = "http://127.0.0.1:20130/v1"');
+  });
+
+  test("does not overwrite a user-owned openai_base_url", () => {
+    const original = [
+      'openai_base_url = "http://127.0.0.1:9999/v1"',
+      "[features]",
+      "multi_agent = true",
+      "",
+    ].join("\n");
+
+    const updated = injectCodexConfig(original, {
+      model: "openrouter/moonshotai-kimi-k3",
+      catalogPath: "/tmp/catalog.json",
+      baseUrl: "http://127.0.0.1:20130/v1",
+    });
+
+    expect(updated).toContain('openai_base_url = "http://127.0.0.1:9999/v1"');
+    expect(updated).not.toContain("# Auto-injected by voidRoute");
   });
 });

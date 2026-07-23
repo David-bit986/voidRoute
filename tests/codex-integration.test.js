@@ -95,12 +95,14 @@ describe("Codex multi-model integration", () => {
       nativeModelCount: 1,
       diagnostics: [],
       collisions: [],
+      historyMigration: { rows: 0, files: 0, deferred: false },
       restartRequired: true,
     });
     expect(config).toContain('model = "openrouter/moonshotai-kimi-k3"');
     expect(config).toContain('model_catalog_json = "');
-    expect(config).toContain("[model_providers.voidRoute]");
-    expect(config).toContain("requires_openai_auth = false");
+    expect(config).toContain('openai_base_url = "http://127.0.0.1:20130/v1"');
+    expect(config).not.toContain('model_provider = "voidRoute"');
+    expect(config).not.toContain("[model_providers.voidRoute]");
     expect(catalog.models.map((model) => model.slug)).toEqual([
       "openrouter/moonshotai-kimi-k3",
       "anthropic/claude-sonnet",
@@ -143,8 +145,8 @@ describe("Codex multi-model integration", () => {
     await syncCodexIntegration(syncOptions);
     const injected = await readFile(paths.config, "utf8");
     expect((injected.match(/^model\s*=/gm) || []).length).toBe(1);
-    expect((injected.match(/^\[model_providers\.voidRoute\]$/gm) || []).length)
-      .toBe(1);
+    expect((injected.match(/^openai_base_url\s*=/gm) || []).length).toBe(1);
+    expect(injected).not.toContain('model_provider = "voidRoute"');
 
     expect(await restoreCodexIntegration({ paths })).toEqual({
       restored: true,
