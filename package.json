@@ -8,7 +8,12 @@
     "#*": "./src/*"
   },
   "scripts": {
-    "start": "bun run index.js"
+    "start": "bun run index.js",
+    "test": "bun test",
+    "codex:patch-desktop": "bun run tools/patch-codex-desktop.mjs --launch",
+    "codex:launch": "bun run tools/launch-codex-desktop.mjs",
+    "test:transport": "bun test test-transport.test.mjs",
+    "check:syntax": "bun --check src/server/request-body.js && bun --check src/server/transport.js && bun --check src/shared/utils/redaction.js && bun --check open-sse/utils/requestLogger.js && bun --check open-sse/handlers/chatCore/requestDetail.js && bun --check open-sse/utils/usageTracking.js && bun --check src/lib/db/repos/usageWrite.js"
   },
   "dependencies": {
     "@inquirer/search": "4.2.1",

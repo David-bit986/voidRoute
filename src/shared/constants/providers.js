@@ -1,5 +1,12 @@
 // Provider definitions
 
+import {
+  resolveProviderAlias,
+  getProviderAlias as getProviderAliasCore,
+  ALIAS_TO_ID as ALIAS_TO_ID_CORE,
+  ID_TO_ALIAS as ID_TO_ALIAS_CORE,
+} from "./aliases.js";
+
 const RISK_NOTICE = "⚠️ Risk Notice: This provider uses a subscription/OAuth session not officially licensed for proxy/router use. Account may be restricted or banned. Use at your own risk.";
 
 // Free Providers (kiro first, iflow last)
@@ -215,7 +222,7 @@ export const AUTH_METHODS = {
   cookie: { id: "cookie", name: "Browser Cookie", icon: "cookie" },
 };
 
-// Helper: Get provider by alias
+// Helper: Get provider by alias (returns the full provider metadata object)
 export function getProviderByAlias(alias) {
   for (const provider of Object.values(AI_PROVIDERS)) {
     if (provider.alias === alias || provider.id === alias) {
@@ -225,29 +232,21 @@ export function getProviderByAlias(alias) {
   return null;
 }
 
-// Helper: Get provider ID from alias
+// Helper: Get provider ID from alias — single source of truth in ./aliases.js
 export function resolveProviderId(aliasOrId) {
-  const provider = getProviderByAlias(aliasOrId);
-  return provider?.id || aliasOrId;
+  return resolveProviderAlias(aliasOrId);
 }
 
-// Helper: Get alias from provider ID
+// Helper: Get alias from provider ID — single source of truth in ./aliases.js
 export function getProviderAlias(providerId) {
-  const provider = AI_PROVIDERS[providerId];
-  return provider?.alias || providerId;
+  return getProviderAliasCore(providerId);
 }
 
 // Alias to ID mapping (for quick lookup)
-export const ALIAS_TO_ID = Object.values(AI_PROVIDERS).reduce((acc, p) => {
-  acc[p.alias] = p.id;
-  return acc;
-}, {});
+export const ALIAS_TO_ID = ALIAS_TO_ID_CORE;
 
 // ID to Alias mapping
-export const ID_TO_ALIAS = Object.values(AI_PROVIDERS).reduce((acc, p) => {
-  acc[p.id] = p.alias;
-  return acc;
-}, {});
+export const ID_TO_ALIAS = ID_TO_ALIAS_CORE;
 
 // Helper: Get providers by service kind (e.g. "tts", "embedding", "image")
 // Providers without serviceKinds default to ["llm"]

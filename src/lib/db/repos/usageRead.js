@@ -1,290 +1,8 @@
-import { EventEmitter } from "events";
 import { getAdapter } from "../driver.js";
-import { parseJson, stringifyJson } from "../helpers/jsonCol.js";
-import { getMeta, setMeta } from "../helpers/metaStore.js";
+import { parseJson } from "../helpers/jsonCol.js";
+import { getLastErrorProvider, getPendingRequests } from "./usageState.js";
 
-const PENDING_TIMEOUT_MS = 60 * 1000;
-const RING_CAP = 50;
-const CONN_CACHE_TTL_MS = 30 * 1000;
 const PERIOD_MS = { "24h": 86400000, "7d": 604800000, "30d": 2592000000, "60d": 5184000000 };
-
-// In-memory state shared across Next.js modules
-if (!global._pendingRequests) global._pendingRequests = { byModel: {}, byAccount: {} };
-if (!global._lastErrorProvider) global._lastErrorProvider = { provider: "", ts: 0 };
-if (!global._statsEmitter) {
-  global._statsEmitter = new EventEmitter();
-  global._statsEmitter.setMaxListeners(50);
-}
-if (!global._pendingTimers) global._pendingTimers = {};
-if (!global._recentRing) global._recentRing = { items: [], initialized: false };
-if (!global._connectionMapCache) global._connectionMapCache = { map: {}, ts: 0 };
-
-const pendingRequests = global._pendingRequests;
-const lastErrorProvider = global._lastErrorProvider;
-const pendingTimers = global._pendingTimers;
-const recentRing = global._recentRing;
-const connCache = global._connectionMapCache;
-
-export const statsEmitter = global._statsEmitter;
-
-function getLocalDateKey(timestamp) {
-  const d = timestamp ? new Date(timestamp) : new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
-
-function addToCounter(target, key, values) {
-  if (!target[key]) target[key] = { requests: 0, promptTokens: 0, completionTokens: 0, cost: 0 };
-  target[key].requests += values.requests || 1;
-  target[key].promptTokens += values.promptTokens || 0;
-  target[key].completionTokens += values.completionTokens || 0;
-  target[key].cost += values.cost || 0;
-  if (values.meta) Object.assign(target[key], values.meta);
-}
-
-function aggregateEntryToDay(day, entry) {
-  const promptTokens = entry.tokens?.prompt_tokens || entry.tokens?.input_tokens || 0;
-  const completionTokens = entry.tokens?.completion_tokens || entry.tokens?.output_tokens || 0;
-  const cost = entry.cost || 0;
-  const vals = { promptTokens, completionTokens, cost };
-
-  day.requests = (day.requests || 0) + 1;
-  day.promptTokens = (day.promptTokens || 0) + promptTokens;
-  day.completionTokens = (day.completionTokens || 0) + completionTokens;
-  day.cost = (day.cost || 0) + cost;
-
-  day.byProvider ||= {};
-  day.byModel ||= {};
-  day.byAccount ||= {};
-  day.byApiKey ||= {};
-  day.byEndpoint ||= {};
-
-  if (entry.provider) addToCounter(day.byProvider, entry.provider, vals);
-
-  const modelKey = entry.provider ? `${entry.model}|${entry.provider}` : entry.model;
-  addToCounter(day.byModel, modelKey, { ...vals, meta: { rawModel: entry.model, provider: entry.provider } });
-
-  if (entry.connectionId) {
-    addToCounter(day.byAccount, entry.connectionId, { ...vals, meta: { rawModel: entry.model, provider: entry.provider } });
-  }
-
-  const apiKeyVal = entry.apiKey && typeof entry.apiKey === "string" ? entry.apiKey : "local-no-key";
-  const akModelKey = `${apiKeyVal}|${entry.model}|${entry.provider || "unknown"}`;
-  addToCounter(day.byApiKey, akModelKey, { ...vals, meta: { rawModel: entry.model, provider: entry.provider, apiKey: entry.apiKey || null } });
-
-  const endpoint = entry.endpoint || "Unknown";
-  const epKey = `${endpoint}|${entry.model}|${entry.provider || "unknown"}`;
-  addToCounter(day.byEndpoint, epKey, { ...vals, meta: { endpoint, rawModel: entry.model, provider: entry.provider } });
-}
-
-function pushToRing(entry) {
-  recentRing.items.push(entry);
-  if (recentRing.items.length > RING_CAP) {
-    recentRing.items = recentRing.items.slice(-RING_CAP);
-  }
-}
-
-async function getConnectionMapCached() {
-  if (Date.now() - connCache.ts < CONN_CACHE_TTL_MS) return connCache.map;
-  try {
-    const { getProviderConnections } = await import("./connectionsRepo.js");
-    const all = await getProviderConnections();
-    const map = {};
-    for (const c of all) map[c.id] = c.name || c.email || c.id;
-    connCache.map = map;
-    connCache.ts = Date.now();
-  } catch {}
-  return connCache.map;
-}
-
-async function ensureRingInitialized() {
-  if (recentRing.initialized) return;
-  recentRing.initialized = true;
-  try {
-    const db = await getAdapter();
-    const rows = db.all(`SELECT timestamp, provider, model, connectionId, apiKey, endpoint, cost, status, tokens FROM usageHistory ORDER BY id DESC LIMIT ?`, [RING_CAP]);
-    recentRing.items = rows.reverse().map((r) => ({
-      timestamp: r.timestamp, provider: r.provider, model: r.model, connectionId: r.connectionId,
-      apiKey: r.apiKey, endpoint: r.endpoint, cost: r.cost, status: r.status,
-      tokens: parseJson(r.tokens, {}),
-    }));
-  } catch {}
-}
-
-async function calculateCost(provider, model, tokens) {
-  if (!tokens || !provider || !model) return 0;
-  try {
-    const { getPricingForModel } = await import("./pricingRepo.js");
-    const pricing = await getPricingForModel(provider, model);
-    if (!pricing) return 0;
-
-    let cost = 0;
-    const inputTokens = tokens.prompt_tokens || tokens.input_tokens || 0;
-    const cachedTokens = tokens.cached_tokens || tokens.cache_read_input_tokens || 0;
-    const nonCachedInput = Math.max(0, inputTokens - cachedTokens);
-    cost += nonCachedInput * (pricing.input / 1000000);
-
-    if (cachedTokens > 0) {
-      const cachedRate = pricing.cached || pricing.input;
-      cost += cachedTokens * (cachedRate / 1000000);
-    }
-
-    const outputTokens = tokens.completion_tokens || tokens.output_tokens || 0;
-    cost += outputTokens * (pricing.output / 1000000);
-
-    const reasoningTokens = tokens.reasoning_tokens || 0;
-    if (reasoningTokens > 0) {
-      const rate = pricing.reasoning || pricing.output;
-      cost += reasoningTokens * (rate / 1000000);
-    }
-
-    const cacheCreationTokens = tokens.cache_creation_input_tokens || 0;
-    if (cacheCreationTokens > 0) {
-      const rate = pricing.cache_creation || pricing.input;
-      cost += cacheCreationTokens * (rate / 1000000);
-    }
-
-    return cost;
-  } catch (e) {
-    console.error("Error calculating cost:", e);
-    return 0;
-  }
-}
-
-export function trackPendingRequest(model, provider, connectionId, started, error = false) {
-  const modelKey = provider ? `${model} (${provider})` : model;
-  const timerKey = `${connectionId}|${modelKey}`;
-
-  if (!pendingRequests.byModel[modelKey]) pendingRequests.byModel[modelKey] = 0;
-  pendingRequests.byModel[modelKey] = Math.max(0, pendingRequests.byModel[modelKey] + (started ? 1 : -1));
-  if (pendingRequests.byModel[modelKey] === 0) delete pendingRequests.byModel[modelKey];
-
-  if (connectionId) {
-    if (!pendingRequests.byAccount[connectionId]) pendingRequests.byAccount[connectionId] = {};
-    if (!pendingRequests.byAccount[connectionId][modelKey]) pendingRequests.byAccount[connectionId][modelKey] = 0;
-    pendingRequests.byAccount[connectionId][modelKey] = Math.max(0, pendingRequests.byAccount[connectionId][modelKey] + (started ? 1 : -1));
-    if (pendingRequests.byAccount[connectionId][modelKey] === 0) {
-      delete pendingRequests.byAccount[connectionId][modelKey];
-      if (Object.keys(pendingRequests.byAccount[connectionId]).length === 0) {
-        delete pendingRequests.byAccount[connectionId];
-      }
-    }
-  }
-
-  if (started) {
-    clearTimeout(pendingTimers[timerKey]);
-    pendingTimers[timerKey] = setTimeout(() => {
-      delete pendingTimers[timerKey];
-      if (pendingRequests.byModel[modelKey] > 0) pendingRequests.byModel[modelKey] = 0;
-      if (connectionId && pendingRequests.byAccount[connectionId]?.[modelKey] > 0) {
-        pendingRequests.byAccount[connectionId][modelKey] = 0;
-      }
-      statsEmitter.emit("pending");
-    }, PENDING_TIMEOUT_MS);
-  } else {
-    clearTimeout(pendingTimers[timerKey]);
-    delete pendingTimers[timerKey];
-  }
-
-  if (!started && error && provider) {
-    lastErrorProvider.provider = provider.toLowerCase();
-    lastErrorProvider.ts = Date.now();
-  }
-
-  const t = new Date().toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
-  console.log(`[${t}] [PENDING] ${started ? "START" : "END"}${error ? " (ERROR)" : ""} | provider=${provider} | model=${model}`);
-  statsEmitter.emit("pending");
-}
-
-export async function getActiveRequests() {
-  const activeRequests = [];
-  const connectionMap = await getConnectionMapCached();
-
-  for (const [connectionId, models] of Object.entries(pendingRequests.byAccount)) {
-    for (const [modelKey, count] of Object.entries(models)) {
-      if (count > 0) {
-        const accountName = connectionMap[connectionId] || `Account ${connectionId.slice(0, 8)}...`;
-        const match = modelKey.match(/^(.*) \((.*)\)$/);
-        activeRequests.push({
-          model: match ? match[1] : modelKey,
-          provider: match ? match[2] : "unknown",
-          account: accountName, count,
-        });
-      }
-    }
-  }
-
-  await ensureRingInitialized();
-  const seen = new Set();
-  const recentRequests = [...recentRing.items]
-    .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
-    .map((e) => {
-      const t = e.tokens || {};
-      return {
-        timestamp: e.timestamp, model: e.model, provider: e.provider || "",
-        promptTokens: t.prompt_tokens || t.input_tokens || 0,
-        completionTokens: t.completion_tokens || t.output_tokens || 0,
-        status: e.status || "ok",
-      };
-    })
-    .filter((e) => {
-      if (e.promptTokens === 0 && e.completionTokens === 0) return false;
-      const minute = e.timestamp ? e.timestamp.slice(0, 16) : "";
-      const key = `${e.model}|${e.provider}|${e.promptTokens}|${e.completionTokens}|${minute}`;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    })
-    .slice(0, 20);
-
-  const errorProvider = (Date.now() - lastErrorProvider.ts < 10000) ? lastErrorProvider.provider : "";
-  return { activeRequests, recentRequests, errorProvider };
-}
-
-export async function saveRequestUsage(entry) {
-  try {
-    const db = await getAdapter();
-
-    if (!entry.timestamp) entry.timestamp = new Date().toISOString();
-    entry.cost = await calculateCost(entry.provider, entry.model, entry.tokens);
-
-    const tokens = entry.tokens || {};
-    const promptTokens = tokens.prompt_tokens || tokens.input_tokens || 0;
-    const completionTokens = tokens.completion_tokens || tokens.output_tokens || 0;
-
-    // All 3 writes (history insert, daily upsert, lifetime counter) in ONE transaction.
-    // better-sqlite3 is sync → no JS yield mid-transaction → no race in same process.
-    db.transaction(() => {
-      db.run(
-        `INSERT INTO usageHistory(timestamp, provider, model, connectionId, apiKey, endpoint, promptTokens, completionTokens, cost, status, tokens, meta) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          entry.timestamp, entry.provider || null, entry.model || null,
-          entry.connectionId || null, entry.apiKey || null, entry.endpoint || null,
-          promptTokens, completionTokens, entry.cost || 0, entry.status || "ok",
-          stringifyJson(tokens), stringifyJson({}),
-        ]
-      );
-
-      const dateKey = getLocalDateKey(entry.timestamp);
-      const row = db.get(`SELECT data FROM usageDaily WHERE dateKey = ?`, [dateKey]);
-      const day = row ? parseJson(row.data, {}) : {
-        requests: 0, promptTokens: 0, completionTokens: 0, cost: 0,
-        byProvider: {}, byModel: {}, byAccount: {}, byApiKey: {}, byEndpoint: {},
-      };
-      aggregateEntryToDay(day, entry);
-      db.run(`INSERT INTO usageDaily(dateKey, data) VALUES(?, ?) ON CONFLICT(dateKey) DO UPDATE SET data = excluded.data`, [dateKey, stringifyJson(day)]);
-
-      // Atomic counter increment in same transaction
-      const cur = db.get(`SELECT value FROM _meta WHERE key = 'totalRequestsLifetime'`);
-      const next = (cur ? parseInt(cur.value, 10) : 0) + 1;
-      db.run(`INSERT INTO _meta(key, value) VALUES('totalRequestsLifetime', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`, [String(next)]);
-    });
-
-    pushToRing(entry);
-    statsEmitter.emit("update");
-  } catch (e) {
-    console.error("Failed to save usage stats:", e);
-  }
-}
 
 export async function getUsageHistory(filter = {}) {
   const db = await getAdapter();
@@ -318,6 +36,8 @@ function loadDaysInRange(adapter, maxDays) {
 
 export async function getUsageStats(period = "all") {
   const db = await getAdapter();
+  const pendingRequests = getPendingRequests();
+  const lastErrorProvider = getLastErrorProvider();
 
   const [{ getProviderConnections }, { getApiKeys }, { getProviderNodes }] = await Promise.all([
     import("./connectionsRepo.js"),
@@ -695,12 +415,9 @@ function formatLogDate(date = new Date()) {
   return `${pad(date.getDate())}-${pad(date.getMonth() + 1)}-${date.getFullYear()} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
 }
 
-// No-op: request log is now derived from usageHistory table on read.
-export async function appendRequestLog() {}
-
 export async function getRecentLogs(limit = 200) {
   try {
-    const db = getAdapter();
+    const db = await getAdapter();
     const rows = db.all(
       `SELECT timestamp, provider, model, connectionId, promptTokens, completionTokens, status, tokens FROM usageHistory ORDER BY id DESC LIMIT ?`,
       [limit],
@@ -725,7 +442,7 @@ export async function getRecentLogs(limit = 200) {
       return `${ts} | ${m} | ${p} | ${account} | ${sent} | ${received} | ${r.status || "-"}`;
     });
   } catch (e) {
-    console.error("[usageRepo] getRecentLogs failed:", e.message);
+    console.error("[usageRead] getRecentLogs failed:", e.message);
     return [];
   }
 }

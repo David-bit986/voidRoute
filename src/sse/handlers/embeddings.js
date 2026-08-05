@@ -1,23 +1,16 @@
-import {
-  getProviderCredentials,
-  markAccountUnavailable,
-  clearAccountError,
-  extractApiKey,
-  isValidApiKey,
-} from "../services/auth.js";
-import { getSettings } from "#lib/localDb";
+import { extractApiKey, isValidApiKey, clearAccountError } from "../services/auth.js";
+import { getSettings } from "#lib/db/index.js";
 import { getModelInfo } from "../services/model.js";
 import { handleEmbeddingsCore } from "#open-sse/handlers/embeddingsCore.js";
-import { errorResponse, unavailableResponse } from "#open-sse/utils/error.js";
+import { errorResponse } from "#open-sse/utils/error.js";
 import { HTTP_STATUS } from "#open-sse/config/runtimeConfig.js";
 import * as log from "../utils/logger.js";
-import { updateProviderCredentials, checkAndRefreshToken } from "../services/tokenRefresh.js";
+import { updateProviderCredentials } from "../services/tokenRefresh.js";
+import { ConnectionPool } from "../services/ConnectionPool.js";
 
 /**
- * Handle embeddings request for the SSE/Next.js server.
- * Follows the same auth + fallback pattern as handleChat.
- *
- * @param {Request} request
+ * Handle embeddings request.
+ * Credential + refresh + fallback handled by ConnectionPool.
  */
 export async function handleEmbeddings(request) {
   let body;
@@ -79,35 +72,10 @@ export async function handleEmbeddings(request) {
     log.info("ROUTING", `Provider: ${provider}, Model: ${model}`);
   }
 
-  // Credential + fallback loop (mirrors handleChat)
-  const excludeConnectionIds = new Set();
-  let lastError = null;
-  let lastStatus = null;
+  const pool = new ConnectionPool(provider, model, { logLabel: "EMBEDDINGS" });
 
-  while (true) {
-    const credentials = await getProviderCredentials(provider, excludeConnectionIds, model);
-
-    // All accounts unavailable
-    if (!credentials || credentials.allRateLimited) {
-      if (credentials?.allRateLimited) {
-        const errorMsg = lastError || credentials.lastError || "Unavailable";
-        const status = lastStatus || Number(credentials.lastErrorCode) || HTTP_STATUS.SERVICE_UNAVAILABLE;
-        log.warn("EMBEDDINGS", `[${provider}/${model}] ${errorMsg} (${credentials.retryAfterHuman})`);
-        return unavailableResponse(status, `[${provider}/${model}] ${errorMsg}`, credentials.retryAfter, credentials.retryAfterHuman);
-      }
-      if (excludeConnectionIds.size === 0) {
-        log.error("AUTH", `No credentials for provider: ${provider}`);
-        return errorResponse(HTTP_STATUS.BAD_REQUEST, `No credentials for provider: ${provider}`);
-      }
-      log.warn("EMBEDDINGS", "No more accounts available", { provider });
-      return errorResponse(lastStatus || HTTP_STATUS.SERVICE_UNAVAILABLE, lastError || "All accounts unavailable");
-    }
-
-    log.info("AUTH", `\x1b[32mUsing ${provider} account: ${credentials.connectionName}\x1b[0m`);
-
-    const refreshedCredentials = await checkAndRefreshToken(provider, credentials);
-
-    const result = await handleEmbeddingsCore({
+  return pool.execute(async (refreshedCredentials, credentials) => {
+    return await handleEmbeddingsCore({
       body: { ...body, model: `${provider}/${model}` },
       modelInfo: { provider, model },
       credentials: refreshedCredentials,
@@ -124,19 +92,5 @@ export async function handleEmbeddings(request) {
         await clearAccountError(credentials.connectionId, credentials, model);
       }
     });
-
-    if (result.success) return result.response;
-
-    const { shouldFallback } = await markAccountUnavailable(credentials.connectionId, result.status, result.error, provider, model);
-
-    if (shouldFallback) {
-      log.warn("AUTH", `Account ${credentials.connectionName} unavailable (${result.status}), trying fallback`);
-      excludeConnectionIds.add(credentials.connectionId);
-      lastError = result.error;
-      lastStatus = result.status;
-      continue;
-    }
-
-    return result.response;
-  }
+  });
 }

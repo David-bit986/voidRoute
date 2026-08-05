@@ -3,7 +3,7 @@ import { spawnQuickTunnel, killCloudflared, isCloudflaredRunning, setUnexpectedE
 import { clearPid } from "./pid.js";
 import { waitForHealth, probeUrlAlive } from "./healthCheck.js";
 import { WORKER_URL } from "./config.js";
-import { getSettings, updateSettings } from "#lib/localDb";
+import { getSettings, updateSettings } from "#lib/db/index.js";
 
 const svc = {
   cancelToken: { cancelled: false },

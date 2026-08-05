@@ -1,6 +1,7 @@
 // Re-export from open-sse with localDb integration
-import { getModelAliases, getProviderNodes } from "#lib/localDb";
 import { parseModel as parseModelCore, resolveModelAliasFromMap, getModelInfoCore } from "#open-sse/services/model.js";
+import { getComboModelsFromData } from "#open-sse/services/combo.js";
+import { resolveCodexPickerModel } from "#lib/codex/modelMapReader.js";
 
 // Local provider alias overrides (HMR-friendly, applied on top of open-sse map)
 const LOCAL_PROVIDER_ALIASES = {
@@ -17,9 +18,21 @@ export function parseModel(modelStr) {
 }
 
 /**
+ * Resolve a combo name to its list of member models.
+ * Returns null if the name is not a combo.
+ */
+export async function getComboModels(modelStr) {
+  if (!modelStr || typeof modelStr !== "string" || modelStr.includes("/")) return null;
+  const { getCombos } = await import("#lib/db/index.js");
+  const combos = await getCombos();
+  return getComboModelsFromData(modelStr, combos);
+}
+
+/**
  * Resolve model alias from localDb
  */
 export async function resolveModelAlias(alias) {
+  const { getModelAliases } = await import("#lib/localDb");
   const aliases = await getModelAliases();
   return resolveModelAliasFromMap(alias, aliases);
 }
@@ -28,6 +41,18 @@ export async function resolveModelAlias(alias) {
  * Get full model info (parse or resolve)
  */
 export async function getModelInfo(modelStr) {
+  const pickerModel = await resolveCodexPickerModel(modelStr);
+  if (pickerModel) {
+    const parsedPickerModel = parseModel(
+      `${pickerModel.provider}/${pickerModel.model}`,
+    );
+    return {
+      provider: parsedPickerModel.provider,
+      model: parsedPickerModel.model,
+    };
+  }
+
+  const { getModelAliases, getProviderNodes } = await import("#lib/localDb");
   const parsed = parseModel(modelStr);
 
   if (!parsed.isAlias) {

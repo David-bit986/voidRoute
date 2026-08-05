@@ -1,4 +1,3 @@
-import { PROVIDERS } from "./providers.js";
 import { buildTtsProviderModels } from "./ttsModels.js";
 
 // Provider models - Single source of truth
@@ -826,39 +825,61 @@ export const PROVIDER_MODELS = {
   ],
 };
 
+// ─── Live-sync overlay ──────────────────────────────────────────────────────
+// Runtime overlay of model lists fetched from providers (populated by the
+// "Refresh Models" settings action). When set for an alias, it takes precedence
+// over the static PROVIDER_MODELS so EOL models drop out and new ones appear.
+const SYNCED_MODELS = new Map();
+
+export function setSyncedModels(alias, models) {
+  if (Array.isArray(models) && models.length) {
+    SYNCED_MODELS.set(alias, models);
+  } else {
+    SYNCED_MODELS.delete(alias);
+  }
+}
+
+export function getSyncedModels(alias) {
+  return SYNCED_MODELS.get(alias);
+}
+
+export function clearAllSyncedModels() {
+  SYNCED_MODELS.clear();
+}
+
 // Helper functions
 export function getProviderModels(aliasOrId) {
-  return PROVIDER_MODELS[aliasOrId] || [];
+  return SYNCED_MODELS.get(aliasOrId) || PROVIDER_MODELS[aliasOrId] || [];
 }
 
 export function getDefaultModel(aliasOrId) {
-  const models = PROVIDER_MODELS[aliasOrId];
+  const models = getProviderModels(aliasOrId);
   return models?.[0]?.id || null;
 }
 
 export function isValidModel(aliasOrId, modelId, passthroughProviders = new Set()) {
   if (passthroughProviders.has(aliasOrId)) return true;
-  const models = PROVIDER_MODELS[aliasOrId];
+  const models = getProviderModels(aliasOrId);
   if (!models) return false;
   return models.some(m => m.id === modelId);
 }
 
 export function findModelName(aliasOrId, modelId) {
-  const models = PROVIDER_MODELS[aliasOrId];
+  const models = getProviderModels(aliasOrId);
   if (!models) return modelId;
   const found = models.find(m => m.id === modelId);
   return found?.name || modelId;
 }
 
 export function getModelTargetFormat(aliasOrId, modelId) {
-  const models = PROVIDER_MODELS[aliasOrId];
+  const models = getProviderModels(aliasOrId);
   if (!models) return null;
   const found = models.find(m => m.id === modelId);
   return found?.targetFormat || null;
 }
 
 export function getModelUpstreamId(aliasOrId, modelId) {
-  const models = PROVIDER_MODELS[aliasOrId];
+  const models = getProviderModels(aliasOrId);
   const found = models?.find(m => m.id === modelId);
   if (found?.upstreamModelId) return found.upstreamModelId;
   if (aliasOrId === "cx" && typeof modelId === "string" && modelId.endsWith(CODEX_REVIEW_SUFFIX)) {
@@ -868,43 +889,23 @@ export function getModelUpstreamId(aliasOrId, modelId) {
 }
 
 export function getModelQuotaFamily(aliasOrId, modelId) {
-  const models = PROVIDER_MODELS[aliasOrId];
+  const models = getProviderModels(aliasOrId);
   const found = models?.find(m => m.id === modelId);
   return found?.quotaFamily || "normal";
 }
 
-// OAuth providers that use short aliases (everything else: alias = id)
-const OAUTH_ALIASES = {
-  claude: "cc",
-  codex: "cx",
-  "gemini-cli": "gc",
-  qwen: "qw",
-  iflow: "if",
-  antigravity: "ag",
-  github: "gh",
-  kiro: "kr",
-  cursor: "cu",
-  "kimi-coding": "kmc",
-  kilocode: "kc",
-  cline: "cl",
-  opencode: "oc",
-  vertex: "vertex",
-  "vertex-partner": "vertex-partner",
-};
-
-// Derived from PROVIDERS — no need to maintain manually
-export const PROVIDER_ID_TO_ALIAS = Object.fromEntries(
-  Object.keys(PROVIDERS).map(id => [id, OAUTH_ALIASES[id] || id])
-);
+// Provider id → display alias is owned by the single alias module.
+import { PROVIDER_ID_TO_ALIAS } from "#shared/constants/aliases.js";
+export { PROVIDER_ID_TO_ALIAS };
 
 export function getModelsByProviderId(providerId) {
   const alias = PROVIDER_ID_TO_ALIAS[providerId] || providerId;
-  return PROVIDER_MODELS[alias] || [];
+  return SYNCED_MODELS.get(alias) || PROVIDER_MODELS[alias] || [];
 }
 
 // Get strip list for a model entry (explicit opt-in only)
 // Returns array of content types to strip, e.g. ["image", "audio"]
 export function getModelStrip(alias, modelId) {
-  const entry = PROVIDER_MODELS[alias]?.find(m => m.id === modelId);
+  const entry = getProviderModels(alias).find(m => m.id === modelId);
   return entry?.strip || [];
 }

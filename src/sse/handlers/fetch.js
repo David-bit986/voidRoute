@@ -1,18 +1,17 @@
 import {
-  getProviderCredentials,
-  markAccountUnavailable,
   clearAccountError,
   extractApiKey,
   isValidApiKey,
 } from "../services/auth.js";
-import { getSettings, getCombos } from "#lib/localDb";
+import { getSettings, getCombos } from "#lib/db/index.js";
 import { AI_PROVIDERS, resolveProviderId } from "#shared/constants/providers.js";
 import { handleFetchCore } from "#open-sse/handlers/fetch/index.js";
-import { errorResponse, unavailableResponse } from "#open-sse/utils/error.js";
+import { errorResponse } from "#open-sse/utils/error.js";
 import { HTTP_STATUS } from "#open-sse/config/runtimeConfig.js";
 import * as log from "../utils/logger.js";
-import { updateProviderCredentials, checkAndRefreshToken } from "../services/tokenRefresh.js";
+import { updateProviderCredentials } from "../services/tokenRefresh.js";
 import { handleComboChat, getComboModelsFromData } from "#open-sse/services/combo.js";
+import { ConnectionPool } from "../services/ConnectionPool.js";
 
 /**
  * Handle web fetch (URL extraction) request for the SSE/Next.js server.
@@ -144,33 +143,10 @@ async function handleSingleProviderFetch(body, providerInput, request, apiKey, s
     return errorResponse(result.status || HTTP_STATUS.BAD_GATEWAY, result.error || "Fetch failed");
   }
 
-  // Credential + fallback loop
-  const excludeConnectionIds = new Set();
-  let lastError = null;
-  let lastStatus = null;
+  // Credential + fallback loop via shared ConnectionPool
+  const pool = new ConnectionPool(providerId, null, { logLabel: "FETCH" });
 
-  while (true) {
-    const credentials = await getProviderCredentials(providerId, excludeConnectionIds);
-
-    if (!credentials || credentials.allRateLimited) {
-      if (credentials?.allRateLimited) {
-        const errorMsg = lastError || credentials.lastError || "Unavailable";
-        const status = lastStatus || Number(credentials.lastErrorCode) || HTTP_STATUS.SERVICE_UNAVAILABLE;
-        log.warn("FETCH", `[${providerId}] ${errorMsg} (${credentials.retryAfterHuman})`);
-        return unavailableResponse(status, `[${providerId}] ${errorMsg}`, credentials.retryAfter, credentials.retryAfterHuman);
-      }
-      if (excludeConnectionIds.size === 0) {
-        log.error("AUTH", `No credentials for provider: ${providerId}`);
-        return errorResponse(HTTP_STATUS.BAD_REQUEST, `No credentials for provider: ${providerId}`);
-      }
-      log.warn("FETCH", "No more accounts available", { provider: providerId });
-      return errorResponse(lastStatus || HTTP_STATUS.SERVICE_UNAVAILABLE, lastError || "All accounts unavailable");
-    }
-
-    log.info("AUTH", `\x1b[32mUsing ${providerId} account: ${credentials.connectionName}\x1b[0m`);
-
-    const refreshedCredentials = await checkAndRefreshToken(providerId, credentials);
-
+  return pool.execute(async (refreshedCredentials, credentials) => {
     const result = await handleFetchCore({
       url: targetUrl,
       format,
@@ -193,21 +169,19 @@ async function handleSingleProviderFetch(body, providerInput, request, apiKey, s
     });
 
     if (result.success) {
-      return new Response(JSON.stringify(result.data), {
-        headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
-      });
+      return {
+        success: true,
+        response: new Response(JSON.stringify(result.data), {
+          headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
+        })
+      };
     }
 
-    const { shouldFallback } = await markAccountUnavailable(credentials.connectionId, result.status, result.error, providerId);
-
-    if (shouldFallback) {
-      log.warn("AUTH", `Account ${credentials.connectionName} unavailable (${result.status}), trying fallback`);
-      excludeConnectionIds.add(credentials.connectionId);
-      lastError = result.error;
-      lastStatus = result.status;
-      continue;
-    }
-
-    return errorResponse(result.status || HTTP_STATUS.BAD_GATEWAY, result.error || "Fetch failed");
-  }
+    return {
+      success: false,
+      status: result.status,
+      error: result.error,
+      response: errorResponse(result.status || HTTP_STATUS.BAD_GATEWAY, result.error || "Fetch failed")
+    };
+  });
 }

@@ -1,4 +1,5 @@
-import { saveRequestUsage, appendRequestLog, saveRequestDetail } from "#lib/usageDb.js";
+import { saveRequestUsage, saveRequestDetail } from "#lib/db/index.js";
+import { redactSensitiveData } from "#shared/utils/redaction.js";
 import { COLORS } from "../../utils/stream.js";
 
 const OPTIONAL_PARAMS = [
@@ -56,7 +57,7 @@ export function extractUsageFromResponse(responseBody) {
 }
 
 export function buildRequestDetail(base, overrides = {}) {
-  return {
+  return redactSensitiveData({
     provider: base.provider || "unknown",
     model: base.model || "unknown",
     connectionId: base.connectionId || undefined,
@@ -69,7 +70,7 @@ export function buildRequestDetail(base, overrides = {}) {
     response: base.response || {},
     status: base.status || "success",
     ...overrides
-  };
+  });
 }
 
 export function saveUsageStats({ provider, model, tokens, connectionId, apiKey, endpoint, label = "USAGE" }) {
@@ -96,7 +97,6 @@ export function saveUsageStats({ provider, model, tokens, connectionId, apiKey, 
     tokens: normalized,
     timestamp: new Date().toISOString(),
     connectionId: connectionId || undefined,
-    apiKey: apiKey || undefined,
     endpoint: endpoint || null
   }).catch(() => {});
 }

@@ -1,111 +1,87 @@
-import path from 'path';
-import { fileURLToPath } from 'url';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-import express from 'express';
-import cors from 'cors';
 import { handleChat } from './src/sse/handlers/chat.js';
+import { handleEmbeddings } from './src/sse/handlers/embeddings.js';
+import { handleFetch } from './src/sse/handlers/fetch.js';
+import { handleSearch } from './src/sse/handlers/search.js';
+import { handleImageGeneration } from './src/sse/handlers/imageGeneration.js';
+import { handleStt } from './src/sse/handlers/stt.js';
+import { handleTts } from './src/sse/handlers/tts.js';
 import { initTranslators } from '#open-sse/translator/index.js';
 import { setupCLI } from './cli-ui.js';
 import { initConsoleLogCapture } from './src/lib/consoleLogBuffer.js';
+import { createNativeRequestHandler, startNativeServer } from './src/server/transport.js';
+import { getModels } from './src/server/model-list.js';
 
-const app = express();
-app.use(cors());
-// Parse body as text first to avoid express body-parser tampering with SSE/Fetch streams easily, 
-// or just use json but carefully. We will use a custom raw parser or express.json.
-app.use(express.json({ limit: '50mb' }));
+const SERVER_HOSTNAME = process.env.VOIDROUTE_HOST?.trim() || process.env.HOST?.trim() || '127.0.0.1';
+const SERVER_AUTH_TOKEN = process.env.OPENCODEX_API_AUTH_TOKEN?.trim() || '';
 
-// Fake NextRequest object for the handlers
-function createNextRequest(req) {
-  const url = new URL(req.originalUrl, `http://${req.headers.host}`);
-  return {
-    url: url.toString(),
-    method: req.method,
-    headers: new Headers(req.headers),
-    json: async () => req.body,
-    text: async () => JSON.stringify(req.body)
-  };
+const requestHandler = createNativeRequestHandler({
+  handleChat,
+  getModels,
+  hostname: SERVER_HOSTNAME,
+  authToken: SERVER_AUTH_TOKEN,
+  handlers: {
+    embeddings: handleEmbeddings,
+    fetch: handleFetch,
+    search: handleSearch,
+    imageGeneration: handleImageGeneration,
+    stt: handleStt,
+    tts: handleTts,
+  },
+});
+
+async function runCodexListeningHook() {
+  // Startup may refresh/repair a validated, owned lifecycle generation.
+  const { CodexLifecycle } = await import('./src/lib/cli-config/CodexLifecycle.js');
+  const { getProviderNodes } = await import('./src/lib/db/index.js');
+  const providerNodes = await getProviderNodes();
+  const result = new CodexLifecycle().repairCatalogNow({ providerNodes });
+  if (result.repaired) {
+    console.log('  ℹ️  Repaired Codex model catalog/cache (natives + selected routed).');
+  } else if (result.refreshed) {
+    console.log('  ℹ️  Refreshed Codex models cache (models_cache.json).');
+  }
 }
 
-app.get('/v1/models', async (req, res) => {
-  try {
-    const { getProviderConnections } = await import('#lib/localDb.js');
-    const { getModelsByProviderId, PROVIDER_ID_TO_ALIAS } = await import('./open-sse/config/providerModels.js');
-    
-    const connections = await getProviderConnections();
-    const modelsList = [];
-    
-    for (const conn of connections) {
-      const pid = conn.provider || conn.providerId;
-      const alias = PROVIDER_ID_TO_ALIAS[pid] || pid;
-      const list = getModelsByProviderId(pid);
-      if (list && list.length > 0) {
-        for (const m of list) {
-          if (m.type === 'image' || m.type === 'embedding' || m.type === 'tts' || m.type === 'stt') continue;
-          const modelId = typeof m === 'string' ? m : m.id;
-          const id = alias ? `${alias}/${modelId}` : modelId;
-          if (!modelsList.find(x => x.id === id)) {
-            modelsList.push({ id, object: 'model', created: Date.now(), owned_by: 'voidRoute' });
-          }
-        }
-      }
-    }
-    
-    res.json({ object: 'list', data: modelsList });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.post(['/v1/chat/completions', '/v1/messages', '/v1/responses'], async (req, res) => {
-  try {
-    const nextReq = createNextRequest(req);
-    const response = await handleChat(nextReq, {
-      endpoint: req.originalUrl,
-      body: req.body,
-      headers: req.headers
-    });
-    
-    // Copy headers from standard Response to Express res
-    response.headers.forEach((value, key) => {
-      res.setHeader(key, value);
-    });
-    res.status(response.status);
-    
-    if (response.body) {
-      // ReadableStream to Node stream
-      const reader = response.body.getReader();
-      const pump = async () => {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) {
-            res.end();
-            break;
-          }
-          res.write(value);
-        }
-      };
-      await pump();
-    } else {
-      const text = await response.text();
-      res.send(text);
-    }
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: err.message });
-  }
-});
+function reportStartupFailure(stage, error) {
+  console.error(`[Startup] ${stage} failed:`, error);
+}
 
 async function start() {
   initConsoleLogCapture();
   await initTranslators();
-  const PORT = process.env.PORT || 20130;
-  app.listen(PORT, () => {
-    // Start CLI
-    setupCLI(PORT);
-  });
+  const { hydrateSyncedModels } = await import('./src/lib/modelSync.js');
+  await hydrateSyncedModels();
+  const PORT = Number.parseInt(process.env.PORT || '20130', 10);
+  try {
+    startNativeServer({
+      port: PORT,
+      hostname: SERVER_HOSTNAME,
+      authToken: SERVER_AUTH_TOKEN,
+      fetch: requestHandler,
+      onListening: () => {
+        // Start CLI after Bun has bound the public transport.
+        try {
+          void setupCLI(PORT).catch((error) => reportStartupFailure('CLI setup', error));
+        } catch (error) {
+          reportStartupFailure('CLI setup', error);
+          throw error;
+        }
+        void runCodexListeningHook().catch((error) => reportStartupFailure('Codex listening hook', error));
+      },
+    });
+  } catch (err) {
+    if (err?.code === 'EADDRINUSE' || /address already in use/i.test(err?.message || '')) {
+      console.error(`\n  ❌ Port ${PORT} is already in use.`);
+      console.error('     Another voidRoute instance is already running.');
+      console.error('     Close it (or that window) and try again.\n');
+    } else {
+      console.error(err);
+    }
+    process.exit(1);
+  }
 }
 
-start();
+start().catch((error) => {
+  reportStartupFailure('initialization', error);
+  process.exitCode = 1;
+});

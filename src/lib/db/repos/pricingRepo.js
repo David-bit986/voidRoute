@@ -1,6 +1,4 @@
-import { getAdapter } from "../driver.js";
-import { parseJson, stringifyJson } from "../helpers/jsonCol.js";
-import { makeKv } from "../helpers/kvStore.js";
+import { makeKv, KV_DELETE } from "../helpers/kvStore.js";
 
 const pricingKv = makeKv("pricing");
 const CACHE_TTL_MS = 5000;
@@ -58,45 +56,30 @@ export async function getPricingForModel(provider, model) {
 
 // Atomic merge inside transaction (per-provider read-modify-write)
 export async function updatePricing(pricingData) {
-  const db = await getAdapter();
-  db.transaction(() => {
-    for (const [provider, models] of Object.entries(pricingData)) {
-      const row = db.get(`SELECT value FROM kv WHERE scope = 'pricing' AND key = ?`, [provider]);
-      const current = row ? (parseJson(row.value, {}) || {}) : {};
-      const merged = { ...current };
+  for (const [provider, models] of Object.entries(pricingData)) {
+    await pricingKv.merge(provider, (current) => {
+      const merged = { ...(current || {}) };
       for (const [model, pricing] of Object.entries(models)) {
         merged[model] = pricing;
       }
-      db.run(
-        `INSERT INTO kv(scope, key, value) VALUES('pricing', ?, ?) ON CONFLICT(scope, key) DO UPDATE SET value = excluded.value`,
-        [provider, stringifyJson(merged)]
-      );
-    }
-  });
+      return merged;
+    }, {});
+  }
   invalidate();
   return await getUserPricing();
 }
 
 export async function resetPricing(provider, model) {
   if (!provider) return await getUserPricing();
-  const db = await getAdapter();
-  db.transaction(() => {
-    if (!model) {
-      db.run(`DELETE FROM kv WHERE scope = 'pricing' AND key = ?`, [provider]);
-      return;
-    }
-    const row = db.get(`SELECT value FROM kv WHERE scope = 'pricing' AND key = ?`, [provider]);
-    const current = row ? (parseJson(row.value, {}) || {}) : {};
-    delete current[model];
-    if (Object.keys(current).length === 0) {
-      db.run(`DELETE FROM kv WHERE scope = 'pricing' AND key = ?`, [provider]);
-    } else {
-      db.run(
-        `INSERT INTO kv(scope, key, value) VALUES('pricing', ?, ?) ON CONFLICT(scope, key) DO UPDATE SET value = excluded.value`,
-        [provider, stringifyJson(current)]
-      );
-    }
-  });
+  if (!model) {
+    await pricingKv.remove(provider);
+  } else {
+    await pricingKv.merge(provider, (current) => {
+      const next = { ...(current || {}) };
+      delete next[model];
+      return Object.keys(next).length === 0 ? KV_DELETE : next;
+    }, {});
+  }
   invalidate();
   return await getUserPricing();
 }

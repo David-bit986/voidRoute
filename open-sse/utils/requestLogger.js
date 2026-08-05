@@ -1,3 +1,10 @@
+import {
+  redactHeaders,
+  redactSecretString,
+  redactSensitiveData,
+  REDACTED_SECRET,
+} from "#shared/utils/redaction.js";
+
 // Check if running in Node.js environment (has fs module)
 const isNode = typeof process !== "undefined" && process.versions?.node && typeof window === "undefined";
 
@@ -63,32 +70,18 @@ function writeJsonFile(sessionPath, filename, data) {
   
   try {
     const filePath = path.join(sessionPath, filename);
-    fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
+    fs.writeFileSync(filePath, JSON.stringify(redactSensitiveData(data), null, 2));
   } catch (err) {
     console.log(`[LOG] Failed to write ${filename}:`, err.message);
   }
 }
 
-// Mask sensitive data in headers (DISABLED - keep full token for testing)
+// Mask sensitive data before any request/response log is serialized.
 function maskSensitiveHeaders(headers) {
-  if (!headers) return {};
-  return { ...headers };
-  
-  // Old masking code (disabled):
-  // const masked = { ...headers };
-  // const sensitiveKeys = ["authorization", "x-api-key", "cookie", "token"];
-  // 
-  // for (const key of Object.keys(masked)) {
-  //   const lowerKey = key.toLowerCase();
-  //   if (sensitiveKeys.some(sk => lowerKey.includes(sk))) {
-  //     const value = masked[key];
-  //     if (value && value.length > 20) {
-  //       masked[key] = value.slice(0, 10) + "..." + value.slice(-5);
-  //     }
-  //   }
-  // }
-  // return masked;
+  return redactHeaders(headers);
 }
+
+export { maskSensitiveHeaders, redactSensitiveData, redactSecretString, REDACTED_SECRET };
 
 // No-op logger when logging is disabled
 function createNoOpLogger() {
@@ -170,7 +163,7 @@ export async function createRequestLogger(sourceFormat, targetFormat, model) {
         timestamp: new Date().toISOString(),
         status,
         statusText,
-        headers: headers ? (typeof headers.entries === "function" ? Object.fromEntries(headers.entries()) : headers) : {},
+        headers: maskSensitiveHeaders(headers),
         body
       });
     },
@@ -180,7 +173,7 @@ export async function createRequestLogger(sourceFormat, targetFormat, model) {
       if (!fs || !sessionPath) return;
       try {
         const filePath = path.join(sessionPath, "5_res_provider.txt");
-        fs.appendFileSync(filePath, chunk);
+        fs.appendFileSync(filePath, typeof chunk === "string" ? redactSecretString(chunk) : chunk);
       } catch (err) {
         // Ignore append errors
       }
@@ -191,7 +184,7 @@ export async function createRequestLogger(sourceFormat, targetFormat, model) {
       if (!fs || !sessionPath) return;
       try {
         const filePath = path.join(sessionPath, "6_res_openai.txt");
-        fs.appendFileSync(filePath, chunk);
+        fs.appendFileSync(filePath, typeof chunk === "string" ? redactSecretString(chunk) : chunk);
       } catch (err) {
         // Ignore append errors
       }
@@ -210,7 +203,7 @@ export async function createRequestLogger(sourceFormat, targetFormat, model) {
       if (!fs || !sessionPath) return;
       try {
         const filePath = path.join(sessionPath, "7_res_client.txt");
-        fs.appendFileSync(filePath, chunk);
+        fs.appendFileSync(filePath, typeof chunk === "string" ? redactSecretString(chunk) : chunk);
       } catch (err) {
         // Ignore append errors
       }
@@ -248,9 +241,9 @@ export function logError(provider, { error, url, model, requestBody }) {
       provider,
       model,
       url,
-      error: error?.message || String(error),
-      stack: error?.stack,
-      requestBody
+      error: redactSecretString(error?.message || String(error)),
+      stack: error?.stack ? redactSecretString(error.stack) : undefined,
+      requestBody: redactSensitiveData(requestBody)
     };
     
     fs.appendFileSync(logPath, JSON.stringify(logEntry) + "\n");

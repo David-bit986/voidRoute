@@ -67,7 +67,24 @@ When you select a tool that supports multi-model, you'll be asked: *"Register AL
    bun index.js
    ```
 
-On Windows, double-click **`Start_voidRoute.bat`** to start immediately.
+On Windows, double-click **`voidRoute.bat`** on the Desktop, or
+**`voidRoute-Codex-Patched.bat`**, to start the proxy and the patched Codex Desktop picker.
+
+### Codex Desktop Routed Picker (Experimental)
+
+The current Windows Codex Desktop filters routed `provider/model` rows from its picker even though
+the Codex app-server accepts them. To use the local picker workaround, run:
+
+```bash
+bun run tools/patch-codex-desktop.mjs --launch
+```
+
+Or double-click **`voidRoute-Codex-Patched.bat`**. The tool copies the installed Codex package into
+`%LOCALAPPDATA%\voidRoute\codex-desktop-patched`, patches only the copy's `app.asar`, and launches it
+with a separate user-data directory. The original Windows Store installation is not modified.
+
+Re-run the patcher after a Codex Desktop update. This is an experimental local workaround for the
+upstream Desktop picker allowlist; the normal Codex CLI/TUI and original Desktop remain unchanged.
 
 ---
 

@@ -4,7 +4,6 @@ import chalk from 'chalk';
 import http from 'http';
 import fs from 'fs';
 import path from 'path';
-import os from 'os';
 import crypto, { randomUUID } from 'crypto';
 import {
   getSettings, updateSettings,
@@ -13,9 +12,10 @@ import {
   updateProviderConnection,
   getCombos, createCombo, deleteCombo,
   createProviderNode, deleteProviderNode, getProviderNodeById,
-  addCustomModel, deleteCustomModel,
+  getProviderNodes, updateProviderNode,
+  addCustomModel, deleteCustomModel, renameCustomModelAlias,
   getApiKeys, createApiKey, deleteApiKey,
-} from './src/lib/localDb.js';
+} from './src/lib/db/index.js';
 import { PROVIDERS as PROVIDER_ENDPOINTS } from './open-sse/config/providers.js';
 import { PROVIDER_MODELS, PROVIDER_ID_TO_ALIAS, getModelsByProviderId } from './open-sse/config/providerModels.js';
 import {
@@ -25,8 +25,10 @@ import {
 } from './src/lib/oauth/constants/oauth.js';
 import { generatePKCE } from './src/lib/oauth/utils/pkce.js';
 import { getProviderAlias, AI_PROVIDERS } from './src/shared/constants/providers.js';
+import { resolveRoutedPrefix } from './src/sse/utils/routedPrefix.js';
 import { getConsoleLogs, getConsoleEmitter } from './src/lib/consoleLogBuffer.js';
-import { HermesAdapter } from './src/lib/cli-config/index.js';
+import { fetchProviderModels, syncProviderModels, resetSyncedModels } from './src/lib/modelSync.js';
+import { AiderAdapter, ClaudeAdapter, ClineAdapter, CodexAdapter, HermesAdapter, OpenCodeAdapter, PiAdapter } from './src/lib/cli-config/index.js';
 
 // ─── Provider Classification ────────────────────────────────────────────────
 // Providers that use OAuth / device-code flows (NOT simple API keys)
@@ -99,114 +101,6 @@ function resizeAscii(asciiStr, targetWidth, targetHeight = null) {
     newLines.push(newLine);
   }
   return newLines;
-}
-
-async function fetchProviderModels(providerId, conn) {
-  if (!conn) return [];
-  try {
-    let url = '';
-    let headers = { 'Accept': 'application/json' };
-
-    if (providerId === 'openai') {
-      url = 'https://api.openai.com/v1/models';
-      headers['Authorization'] = `Bearer ${conn.apiKey}`;
-    } else if (providerId === 'openrouter') {
-      url = 'https://openrouter.ai/api/v1/models';
-      if (conn.apiKey) headers['Authorization'] = `Bearer ${conn.apiKey}`;
-    } else if (providerId === 'deepseek') {
-      url = 'https://api.deepseek.com/models';
-      headers['Authorization'] = `Bearer ${conn.apiKey}`;
-    } else if (providerId === 'siliconflow') {
-      url = 'https://api.siliconflow.cn/v1/models';
-      headers['Authorization'] = `Bearer ${conn.apiKey}`;
-    } else if (providerId === 'groq') {
-      url = 'https://api.groq.com/openai/v1/models';
-      headers['Authorization'] = `Bearer ${conn.apiKey}`;
-    } else if (providerId === 'together') {
-      url = 'https://api.together.xyz/v1/models';
-      headers['Authorization'] = `Bearer ${conn.apiKey}`;
-    } else if (providerId === 'gemini') {
-      const key = conn.apiKey || conn.accessToken;
-      if (key) {
-        url = `https://generativelanguage.googleapis.com/v1beta/models?key=${key}`;
-      }
-    } else if (providerId === 'anthropic') {
-      url = 'https://api.anthropic.com/v1/models';
-      headers['x-api-key'] = conn.apiKey;
-      headers['anthropic-version'] = '2023-06-01';
-    } else if (providerId === 'ollama') {
-      url = 'http://localhost:11434/api/tags';
-    } else if (providerId === 'mistral') {
-      url = 'https://api.mistral.ai/v1/models';
-      headers['Authorization'] = `Bearer ${conn.apiKey}`;
-    } else {
-      const definition = PROVIDER_ENDPOINTS[providerId];
-      let base = '';
-      if (definition && definition.baseUrl) {
-        base = definition.baseUrl;
-      } else if (providerId.startsWith('openai-compatible-')) {
-        const { getProviderNodeById } = await import('./src/lib/localDb.js');
-        const node = await getProviderNodeById(providerId);
-        if (node && node.baseUrl) {
-          base = node.baseUrl;
-        }
-      } else if (conn?.providerSpecificData?.baseUrl) {
-        base = conn.providerSpecificData.baseUrl;
-      }
-
-      if (base) {
-        if (base.endsWith('/chat/completions')) {
-          base = base.replace(/\/chat\/completions$/, '');
-        } else if (base.endsWith('/messages')) {
-          base = base.replace(/\/messages$/, '');
-        }
-        
-        if (base.endsWith('/v1')) {
-          url = `${base}/models`;
-        } else if (base.includes('/v1/')) {
-          url = base.split('/v1/')[0] + '/v1/models';
-        } else {
-          url = `${base}/models`;
-        }
-
-        if (conn.apiKey && conn.apiKey !== 'local-no-key') {
-          headers['Authorization'] = `Bearer ${conn.apiKey}`;
-        }
-      }
-    }
-
-    if (!url) return [];
-
-    const res = await fetch(url, { headers, signal: AbortSignal.timeout(5000) });
-    if (!res.ok) {
-      return [];
-    }
-
-    const data = await res.json();
-    
-    if (providerId === 'ollama') {
-      if (data && Array.isArray(data.models)) {
-        return data.models.map(m => ({ id: m.name, name: m.name }));
-      }
-    } else if (providerId === 'gemini') {
-      if (data && Array.isArray(data.models)) {
-        return data.models
-          .filter(m => m.name && m.name.startsWith('models/'))
-          .map(m => {
-            const cleanId = m.name.replace(/^models\//, '');
-            return { id: cleanId, name: m.displayName || cleanId };
-          });
-      }
-    } else if (data && Array.isArray(data.data)) {
-      return data.data.map(m => ({ id: m.id, name: m.id }));
-    } else if (data && Array.isArray(data)) {
-      return data.map(m => (typeof m === 'string' ? { id: m, name: m } : { id: m.id || m.name, name: m.name || m.id }));
-    }
-    
-    return [];
-  } catch (err) {
-    return [];
-  }
 }
 
 // ─── Local OAuth Callback Server ────────────────────────────────────────────
@@ -582,7 +476,7 @@ export async function setupCLI(port) {
     console.clear();
     displayWelcomeAscii(port);
 
-    const { getProviderConnections } = await import('./src/lib/localDb.js');
+    const { getProviderConnections } = await import('./src/lib/db/index.js');
     const conns = await getProviderConnections();
     const activeCount = conns.filter(c => c.isActive).length;
 
@@ -660,15 +554,24 @@ export async function setupCLI(port) {
 async function manageProviders(port) {
   while (true) {
     const conns = await getProviderConnections();
+    const nodes = await getProviderNodes();
+    const nodeById = new Map();
+    for (const n of nodes) nodeById.set(n.id, n);
     console.log(chalk.cyan('\n  ── Your Providers ──'));
     if (conns.length === 0) {
       console.log(chalk.gray('  (none connected)'));
     } else {
       for (const c of conns) {
         const status = c.isActive ? chalk.green('●') : chalk.red('○');
-        const dispName = c.name || c.email || 'Unnamed';
         const auth = c.authType === 'oauth' ? chalk.magenta('OAuth') : chalk.yellow('API Key');
-        console.log(`  ${status} ${chalk.white.bold(c.provider)} — ${dispName} [${auth}]`);
+        const node = nodeById.get(c.provider);
+        if (node) {
+          const prefix = node.prefix || node.name || c.provider;
+          console.log(`  ${status} ${chalk.white.bold(prefix)} ${chalk.gray(`(${c.name || 'unnamed'})`)} [${auth}]`);
+        } else {
+          const dispName = c.name || c.email || 'Unnamed';
+          console.log(`  ${status} ${chalk.white.bold(c.provider)} — ${dispName} [${auth}]`);
+        }
       }
     }
     console.log('');
@@ -678,6 +581,7 @@ async function manageProviders(port) {
       choices: [
         { name: '🔐 Add OAuth Provider (GitHub, Claude, Kiro, Gemini...)', value: 'add_oauth' },
         { name: '🔌 Add API Key / Local / Custom Provider',                value: 'add_other' },
+        { name: '✏️ Rename a Provider',                                    value: 'rename' },
         { name: '🗑️ Remove a Provider',                                    value: 'remove' },
         new inquirer.Separator(),
         { name: '🔙 Back',                                                 value: 'back' },
@@ -1011,6 +915,67 @@ async function manageProviders(port) {
         console.log(chalk.green(`  ✅ Added: ${modelId.trim()}\n`));
       }
     }
+    if (pAction === 'rename') {
+      const nodeTypes = new Set(['openai-compatible', 'anthropic-compatible', 'custom-embedding']);
+      const renameable = (await getProviderNodes()).filter(n => nodeTypes.has(n.type));
+      if (renameable.length === 0) {
+        console.log(chalk.gray('  No renameable (custom) providers found.'));
+        continue;
+      }
+      const choices = renameable.map(n => ({
+        name: `${n.prefix || n.name || n.id}  ${chalk.gray(`(${n.type})`)}`,
+        value: n.id,
+      }));
+      choices.push(new inquirer.Separator(), { name: '🔙 Cancel', value: null });
+
+      const { nodeId } = await inquirer.prompt([{
+        type: 'list', name: 'nodeId', message: 'Rename which provider?',
+        choices, loop: false,
+      }]);
+      if (!nodeId) continue;
+      const node = renameable.find(n => n.id === nodeId);
+
+      const { newName } = await inquirer.prompt([{
+        type: 'input', name: 'newName',
+        message: 'New display name (shown in lists) [empty to cancel]:',
+        default: node.name || node.prefix,
+        validate: (v) => v.trim().length > 0 || 'A name is required',
+      }]);
+      if (!newName.trim()) continue;
+      const newNameTrimmed = newName.trim();
+
+      const { newPrefix } = await inquirer.prompt([{
+        type: 'input', name: 'newPrefix',
+        message: `New model prefix (${newNameTrimmed}/model IDs). Default keeps "${node.prefix || node.name}":`,
+        default: node.prefix || node.name,
+        validate: (v) => v.trim().length > 0 || 'A prefix is required',
+      }]);
+      if (!newPrefix.trim()) continue;
+      const newPrefixTrimmed = newPrefix.trim();
+
+      const oldPrefix = node.prefix || node.name;
+      const prefixChanged = oldPrefix !== newPrefixTrimmed;
+      const migrated = prefixChanged
+        ? await renameCustomModelAlias(oldPrefix, newPrefixTrimmed)
+        : { renamedModels: 0, renamedAliases: 0 };
+
+      await updateProviderNode(node.id, {
+        name: newNameTrimmed,
+        ...(prefixChanged ? { prefix: newPrefixTrimmed } : {}),
+      });
+
+      const nodeConns = await getProviderConnections({ provider: node.id });
+      for (const c of nodeConns) {
+        await updateProviderConnection(c.id, { name: newNameTrimmed });
+      }
+
+      console.log(chalk.green(`\n  ✅ Provider renamed: "${node.name || nodeId}" → "${newNameTrimmed}".`));
+      if (prefixChanged) {
+        console.log(chalk.green(`     Model prefix: ${oldPrefix}/ → ${newPrefixTrimmed}/ (${migrated.renamedModels} models, ${migrated.renamedAliases} aliases migrated).`));
+        console.log(chalk.yellow('     ℹ️  Re-apply your CLI tool config (CLI Tools Config → Codex → Re-apply) to refresh routed picker names.\n'));
+      }
+    }
+
     if (pAction === 'remove') {
       const conns = await getProviderConnections();
       if (conns.length === 0) { console.log(chalk.gray('  No providers to remove.')); continue; }
@@ -1264,12 +1229,44 @@ async function manageSettings() {
       { name: `Require API Key : ${settings.requireApiKey ? chalk.green('ON') : chalk.red('OFF')}  — Toggle`, value: 'requireKey' },
       { name: `Debug Logging   : ${settings.debugMode ? chalk.green('ON') : chalk.red('OFF')}  — Toggle`, value: 'debug' },
       new inquirer.Separator(),
+      { name: '🔄 Refresh Models (sync live provider model lists)', value: 'refreshModels' },
+      { name: '♻️ Reset Models  (back to built-in static list)', value: 'resetModels' },
+      new inquirer.Separator(),
       { name: '🔙 Back', value: 'back' },
     ],
     loop: false
   }]);
 
   if (setting === 'back') return;
+
+  if (setting === 'refreshModels') {
+    console.log(chalk.cyan('\n  ⏳ Refreshing provider model lists...\n'));
+    const results = await syncProviderModels();
+    if (!results.length) {
+      console.log(chalk.yellow('  ℹ️ No active connections returned live models. Nothing changed.\n'));
+      return;
+    }
+    for (const r of results) {
+      const tag = r.status === 'synced'
+        ? chalk.green(`✅ ${r.alias}: ${r.total} models`)
+        : chalk.yellow(`⏭️  ${r.alias}: ${r.reason}`);
+      console.log(`  ${tag}${r.status === 'synced' ? chalk.gray(`  (+${r.added} / −${r.removed})`) : ''}`);
+    }
+    console.log(chalk.green('\n  ✅ Model lists refreshed.\n'));
+    return;
+  }
+
+  if (setting === 'resetModels') {
+    const { confirm } = await inquirer.prompt([{
+      type: 'confirm', name: 'confirm',
+      message: 'Reset model lists to the built-in static config?',
+      default: false,
+    }]);
+    if (!confirm) return;
+    await resetSyncedModels();
+    console.log(chalk.green('  ✅ Model lists reset to built-in static config.\n'));
+    return;
+  }
 
   if (setting === 'cavemanLevel') {
     const { newLevel } = await inquirer.prompt([{
@@ -1301,97 +1298,24 @@ export async function manageCliTools(port) {
   const endpoint = `http://localhost:${port}/v1`;
   const endpointNoV1 = `http://localhost:${port}`;
   
-  // Helper: detect if a tool already has voidRoute config
-  function detectStatus(tool) {
-    try {
-      if (tool === 'claude' || tool === 'openclaude') {
-        const paths = resolveConfigPath(tool);
-        const found = paths.find(p => fs.existsSync(p));
-        if (!found) return null;
-        const s = JSON.parse(fs.readFileSync(found, 'utf8'));
-        return s?.env?.ANTHROPIC_BASE_URL?.includes('localhost') ? 'connected' : null;
-      }
-      if (tool === 'opencode') {
-        const paths = resolveConfigPath('opencode');
-        const found = paths.find(p => fs.existsSync(p));
-        if (!found) return null;
-        const s = JSON.parse(fs.readFileSync(found, 'utf8'));
-        return s?.provider?.['voidRoute'] ? 'connected' : null;
-      }
-      if (tool === 'codex') {
-        const cxConfig = path.join(os.homedir(), '.codex', 'config.toml');
-        if (!fs.existsSync(cxConfig)) return null;
-        const content = fs.readFileSync(cxConfig, 'utf8');
-        const hasVoidRouteProvider = content.includes('[model_providers.voidRoute]') || content.includes('model_provider = "voidRoute"');
-        const hasVoidRouteOpenai = content.includes('openai_base_url') && content.includes('20130');
-        return (hasVoidRouteProvider || hasVoidRouteOpenai) ? 'connected' : null;
-      }
-      if (tool === 'aider') {
-        const paths = resolveConfigPath('aider');
-        const found = paths.find(p => fs.existsSync(p));
-        if (!found) return null;
-        return fs.readFileSync(found, 'utf8').includes('localhost') ? 'connected' : null;
-      }
-      if (tool === 'pi') {
-        const paths = resolveConfigPath('pi');
-        const found = paths.find(p => fs.existsSync(p));
-        if (!found) return null;
-        const s = JSON.parse(fs.readFileSync(found, 'utf8'));
-        return s?.providers?.['voidRoute'] ? 'connected' : null;
-      }
-      if (tool === 'cline') {
-        const paths = resolveConfigPath('cline');
-        const found = paths.find(p => fs.existsSync(p));
-        if (!found) return null;
-        const s = JSON.parse(fs.readFileSync(found, 'utf8'));
-        return (s?.actModeApiProvider === 'openai' && s?.openAiBaseUrl?.includes('localhost')) ? 'connected' : null;
-      }
-      if (tool === 'hermes') {
-        return new HermesAdapter().detectStatus();
-      }
-    } catch (e) { }
-    return null;
-  }
-
-  // Config path resolver: tries multiple known paths for tools installed elsewhere
-  function resolveConfigPath(tool) {
-    const home = os.homedir();
+  // Tool adapter factory: one adapter per CLI tool holds all config logic
+  function getToolAdapter(tool) {
     switch (tool) {
-      case 'claude':
-      case 'openclaude': return [
-        path.join(home, '.claude', 'settings.json'),
-        path.join(home, '.openclaude', 'settings.json'),
-      ];
-      case 'opencode': return [
-        path.join(home, '.config', 'opencode', 'opencode.json'),
-        path.join(home, '.config', 'opencode-profiles', 'default', 'opencode.json'),
-      ];
-      case 'codex': return [
-        path.join(home, '.codex', 'config.toml'),
-      ];
-      case 'aider': return [
-        path.join(home, '.aider.conf.yml'),
-        path.join(home, '.config', 'aider', 'aider.conf.yml'),
-      ];
-      case 'pi': return [
-        path.join(home, '.pi', 'agent', 'models.json'),
-      ];
-      case 'cline': return [
-        path.join(home, '.cline', 'data', 'globalState.json'),
-      ];
-      case 'hermes': return [
-        path.join(process.env.LOCALAPPDATA || path.join(home, 'AppData', 'Local'), 'Hermes', 'config.yaml'),
-        path.join(process.env.LOCALAPPDATA || path.join(home, 'AppData', 'Local'), 'hermes', 'config.yaml'),
-        path.join(home, '.hermes', 'config.yaml'),
-      ];
-      default: return [];
+      case 'claude': return new ClaudeAdapter(false);
+      case 'openclaude': return new ClaudeAdapter(true);
+      case 'opencode': return new OpenCodeAdapter();
+      case 'codex': return new CodexAdapter();
+      case 'aider': return new AiderAdapter();
+      case 'pi': return new PiAdapter();
+      case 'cline': return new ClineAdapter();
+      case 'hermes': return new HermesAdapter();
+      default: return null;
     }
   }
 
-  function getConfigPath(tool) {
-    const paths = resolveConfigPath(tool);
-    const found = paths.find(p => fs.existsSync(path.dirname(p)));
-    return found || paths[0];
+  // Helper: detect if a tool already has voidRoute config
+  function detectStatus(tool) {
+    try { return getToolAdapter(tool)?.detectStatus() || null; } catch (e) { return null; }
   }
   
   function label(tool, name) {
@@ -1477,7 +1401,7 @@ export async function manageCliTools(port) {
       const { PROVIDER_MODELS } = await import('./open-sse/config/providerModels.js');
       
       if (fetchedModels.length > 0) {
-        const alias = getProviderAlias(conn.provider);
+        const alias = (await resolveRoutedPrefix(conn.provider)) || getProviderAlias(conn.provider);
         const staticList = PROVIDER_MODELS[alias] || PROVIDER_MODELS[conn.provider];
         modelsForThisProvider = fetchedModels
           .filter(m => !m.type || m.type === 'llm')
@@ -1491,7 +1415,7 @@ export async function manageCliTools(port) {
         console.log(chalk.cyan(`  ✨ Loaded ${modelsForThisProvider.length} models from ${conn.provider} API`));
       } else {
         // Fallback to static model list
-        const alias = getProviderAlias(conn.provider);
+        const alias = (await resolveRoutedPrefix(conn.provider)) || getProviderAlias(conn.provider);
         const list = getModelsByProviderId(conn.provider) || PROVIDER_MODELS[alias] || PROVIDER_MODELS[conn.provider];
         if (list) {
           for (const m of list) {
@@ -1563,6 +1487,8 @@ export async function manageCliTools(port) {
           }]);
           allModelsForPi = useAll;
         } else if (tool === 'codex') {
+          // OpenCodex multi-model: register the SELECTED provider's models only
+          // (the Codex picker is the only model picker).
           const { registerMode } = await inquirer.prompt([{
             type: 'list', name: 'registerMode',
             message: `How would you like to configure models for Codex? (OpenCodex Multi-Model Proxy)`,
@@ -1584,472 +1510,61 @@ export async function manageCliTools(port) {
 
     // ──── CLAUDE CODE & OPENCLAUDE ─────────────────────────────────────────
     if (tool === 'claude' || tool === 'openclaude') {
-      const configPath = getConfigPath(tool);
-      const configDir = path.dirname(configPath);
-      const isOpenClaude = tool === 'openclaude';
-      const displayName = isOpenClaude ? 'OpenClaude' : 'Claude Code';
-      const allConfPaths = resolveConfigPath(tool).join('\n     or ');
-      
-      // Check if the selected model has a provider prefix (e.g. "ag/gemini-3.5-flash")
-      const hasProviderPrefix = selectedModel.includes('/');
-      
+      const adapter = getToolAdapter(tool);
       if (action === 'reset') {
-        try {
-          // Reset all possible config paths
-          for (const p of resolveConfigPath(tool)) {
-            if (fs.existsSync(p)) {
-              let s = JSON.parse(fs.readFileSync(p, 'utf8'));
-              if (s.env) {
-                delete s.env.ANTHROPIC_BASE_URL;
-                delete s.env.ANTHROPIC_AUTH_TOKEN;
-                delete s.env.ANTHROPIC_DEFAULT_OPUS_MODEL;
-                delete s.env.ANTHROPIC_DEFAULT_SONNET_MODEL;
-                delete s.env.ANTHROPIC_DEFAULT_HAIKU_MODEL;
-                delete s.env.ANTHROPIC_MODEL;
-                delete s.env.API_TIMEOUT_MS;
-                if (isOpenClaude) {
-                  delete s.env.OPENAI_API_KEY;
-                  delete s.env.OPENAI_BASE_URL;
-                  delete s.env.OPENAI_MODEL;
-                  delete s.env.CLAUDE_CODE_USE_OPENAI;
-                }
-                if (Object.keys(s.env).length === 0) delete s.env;
-              }
-              fs.writeFileSync(p, JSON.stringify(s, null, 2));
-            }
-          }
-          console.log(chalk.green(`  ✅ voidRoute config removed from ${displayName}.`));
-        } catch (e) { console.log(chalk.red(`  ❌ ${e.message}`)); }
+        adapter.resetConfig();
       } else {
-        let currentSettings = {};
-        const existingPath = resolveConfigPath(tool).find(p => fs.existsSync(p));
-        const writePath = existingPath || configPath;
-        try { if (fs.existsSync(writePath)) currentSettings = JSON.parse(fs.readFileSync(writePath, 'utf8')); } catch (e) { }
-        currentSettings.hasCompletedOnboarding = true;
-        if (!currentSettings.env) currentSettings.env = {};
-        
-        if (isOpenClaude && hasProviderPrefix) {
-          // OpenClaude with provider-prefixed model → use OpenAI-compatible routing
-          currentSettings.env.CLAUDE_CODE_USE_OPENAI = '1';
-          currentSettings.env.OPENAI_BASE_URL = endpoint;
-          currentSettings.env.OPENAI_MODEL = selectedModel;
-          currentSettings.env.OPENAI_API_KEY = 'sk_voidRoute';
-          if (!fs.existsSync(configDir)) fs.mkdirSync(configDir, { recursive: true });
-          fs.writeFileSync(writePath, JSON.stringify(currentSettings, null, 2));
-          console.log(chalk.green(`  ✅ ${displayName} configured via OpenAI-compatible mode`));
-          console.log(chalk.gray(`     Config: ${writePath}`));
-          console.log(chalk.gray(`     Model: ${selectedModel}`));
-          console.log(chalk.dim(`     (Other possible paths: ${allConfPaths})`));
-        } else {
-          // Anthropic API mode (works for both Claude and OpenClaude)
-          currentSettings.env.ANTHROPIC_BASE_URL = endpointNoV1;
-          currentSettings.env.ANTHROPIC_AUTH_TOKEN = "sk_voidRoute";
-          currentSettings.env.ANTHROPIC_DEFAULT_OPUS_MODEL = selectedModel;
-          currentSettings.env.ANTHROPIC_DEFAULT_SONNET_MODEL = selectedModel;
-          currentSettings.env.ANTHROPIC_DEFAULT_HAIKU_MODEL = selectedModel;
-          currentSettings.env.ANTHROPIC_MODEL = selectedModel;
-          if (!fs.existsSync(configDir)) fs.mkdirSync(configDir, { recursive: true });
-          fs.writeFileSync(writePath, JSON.stringify(currentSettings, null, 2));
-          console.log(chalk.green(`  ✅ ${displayName} configured via Anthropic API mode`));
-          console.log(chalk.gray(`     Config: ${writePath}`));
-          console.log(chalk.gray(`     Model: ${selectedModel}`));
-          console.log(chalk.dim(`     (Other possible paths: ${allConfPaths})`));
-          if (hasProviderPrefix && tool === 'claude') {
-            console.log(chalk.yellow(`  ⚠️  Note: Claude Code's Anthropic API mode may not support non-Anthropic models.`));
-            console.log(chalk.yellow(`  ⚠️  Use OpenClaude instead for cross-provider model routing.`));
-          }
-        }
+        adapter.applyConfig(selectedModel, endpoint, endpointNoV1);
       }
     }
     // ──── OPENCODE ────────────────────────────────────────────────────────
     else if (tool === 'opencode') {
-      const ocConfigPath = getConfigPath(tool);
-      const ocDir = path.dirname(ocConfigPath);
-      const ocPath = ocConfigPath;
-
+      const adapter = getToolAdapter(tool);
       if (action === 'reset') {
-        try {
-          for (const p of resolveConfigPath(tool)) {
-            if (fs.existsSync(p)) {
-              let s = JSON.parse(fs.readFileSync(p, 'utf8'));
-              if (s.provider) delete s.provider['voidRoute'];
-              if (s.model?.startsWith('voidRoute/')) delete s.model;
-              if (s.agent?.explorer?.model?.startsWith('voidRoute/')) {
-                delete s.agent.explorer;
-                if (Object.keys(s.agent).length === 0) delete s.agent;
-              }
-              fs.writeFileSync(p, JSON.stringify(s, null, 2));
-            }
-          }
-          console.log(chalk.green(`  ✅ voidRoute config removed from OpenCode.`));
-        } catch (e) { console.log(chalk.red(`  ❌ ${e.message}`)); }
+        adapter.resetConfig();
       } else {
-        let ocSettings = {};
-        try { if (fs.existsSync(ocPath)) ocSettings = JSON.parse(fs.readFileSync(ocPath, 'utf8')); } catch (e) { }
-        
-        let ocModels = {};
-
-        // If user chose "all models", register every model from the provider
-        if (allModelsForProvider && allModelsForProvider.length > 0) {
-          for (const mId of allModelsForProvider) {
-            ocModels[mId] = {
-              name: mId,
-              modalities: { input: ["text", "image"], output: ["text"] }
-            };
-          }
-          console.log(chalk.cyan(`  📦 Registered ${allModelsForProvider.length} models for OpenCode`));
-        } else {
-          const allCombos = await getCombos().catch(() => []);
-          const selectedCombo = allCombos.find(c => c.name === selectedModel);
-
-          if (selectedCombo) {
-            for (const m of selectedCombo.models) {
-              const mId = m.provider ? `${getProviderAlias(m.provider)}/${m.model}` : m.model;
-              ocModels[mId] = { name: mId, modalities: { input: ["text", "image"], output: ["text"] } };
-            }
-            selectedModel = defaultModelForTool;
-          } else {
-            ocModels[selectedModel] = {
-              name: selectedModel,
-              modalities: { input: ["text", "image"], output: ["text"] }
-            };
-          }
-        }
-
-        if (!ocSettings.provider) ocSettings.provider = {};
-        ocSettings.provider['voidRoute'] = {
-          npm: "@ai-sdk/openai-compatible",
-          options: { baseURL: endpoint, apiKey: "sk_voidRoute" },
-          models: ocModels
-        };
-        ocSettings.model = `voidRoute/${selectedModel}`;
-        if (!ocSettings.agent) ocSettings.agent = {};
-        ocSettings.agent.explorer = { description: "Fast explorer subagent", mode: "subagent", model: `voidRoute/${selectedModel}` };
-        try {
-          if (!fs.existsSync(ocDir)) fs.mkdirSync(ocDir, { recursive: true });
-          fs.writeFileSync(ocPath, JSON.stringify(ocSettings, null, 2));
-          console.log(chalk.green(`  ✅ Successfully updated ${ocPath}`));
-          console.log(chalk.yellow(`  ⚠️ Note: If OpenCode does not load this config, you might need to manually copy it to your active profile (e.g. ~/.config/opencode-profiles/default/opencode.json)`));
-        } catch (e) { console.log(chalk.red(`  ❌ Failed to write config: ${e.message}`)); }
+        await adapter.applyConfig(selectedModel, endpoint, endpointNoV1, providerModelsList, allModelsForProvider, defaultModelForTool);
       }
     }
     // ──── CODEX ───────────────────────────────────────────────────────────
     else if (tool === 'codex') {
-      const cxDir = path.join(os.homedir(), '.codex');
-      const cxConfig = path.join(cxDir, 'config.toml');
-      const cxAuth = path.join(cxDir, 'auth.json');
-      const cxCache = path.join(cxDir, 'models_cache.json');
-      
+      const adapter = getToolAdapter(tool);
       if (action === 'reset') {
-        try {
-          if (fs.existsSync(cxConfig)) {
-            let toml = fs.readFileSync(cxConfig, 'utf8');
-            toml = toml.replace(/#.*voidRoute.*$/gm, '');
-            toml = toml.replace(/^openai_base_url\s*=.*$/gm, '');
-            toml = toml.replace(/^model_provider\s*=.*$/gm, '');
-            toml = toml.replace(/^model_catalog_json\s*=.*$/gm, '');
-            toml = toml.replace(/^model\s*=.*$/gm, '');
-            toml = toml.replace(/\[model_providers\.voidRoute\][\s\S]*?(?=\n\[|$)/g, '');
-            fs.writeFileSync(cxConfig, toml.replace(/\n{3,}/g, '\n\n').trim() + '\n');
-          }
-          if (fs.existsSync(cxCache)) {
-            let cache = JSON.parse(fs.readFileSync(cxCache, 'utf8'));
-            if (cache._voidRoute_backup) {
-              cache.data = cache._voidRoute_backup.data || [];
-              cache.models = cache._voidRoute_backup.models || [];
-              delete cache._voidRoute_backup;
-            }
-            if (Array.isArray(cache.data)) {
-              cache.data = cache.data.filter(d => d.owned_by !== 'voidRoute');
-            }
-            if (Array.isArray(cache.models)) {
-              cache.models = cache.models.filter(m => m.provider_id !== 'voidRoute');
-            }
-            fs.writeFileSync(cxCache, JSON.stringify(cache, null, 2));
-          }
-          if (fs.existsSync(cxAuth)) {
-            let auth = JSON.parse(fs.readFileSync(cxAuth, 'utf8'));
-            if (auth.OPENAI_API_KEY === 'sk_voidRoute') {
-              delete auth.OPENAI_API_KEY;
-            }
-            if (auth.auth_mode === 'apikey') {
-              delete auth.auth_mode;
-            }
-            fs.writeFileSync(cxAuth, JSON.stringify(auth, null, 2));
-          }
-          console.log(chalk.green(`  ✅ voidRoute config removed from Codex.`));
-        } catch (e) { console.log(chalk.red(`  ❌ ${e.message}`)); }
+        adapter.resetConfig();
       } else {
-        try {
-          if (!fs.existsSync(cxDir)) fs.mkdirSync(cxDir, { recursive: true });
-          let tomlContent = fs.existsSync(cxConfig) ? fs.readFileSync(cxConfig, 'utf8') : '';
-
-          tomlContent = tomlContent.replace(/^openai_base_url\s*=.*$/gm, '');
-          tomlContent = tomlContent.replace(/^model_provider\s*=.*$/gm, '');
-          tomlContent = tomlContent.replace(/^model_catalog_json\s*=.*$/gm, '');
-          tomlContent = tomlContent.replace(/^model\s*=.*$/gm, '');
-          tomlContent = tomlContent.replace(/\[model_providers\.voidRoute\][\s\S]*?(?=\n\[|$)/g, '');
-          tomlContent = tomlContent.replace(/\n{3,}/g, '\n\n').trim();
-
-          const catalogPath = cxCache.replace(/\\/g, '/');
-
-          const topKeys = [
-            `# voidRoute proxy (OpenCodex multi-model configuration)`,
-            `openai_base_url = "${endpointNoV1}"`,
-            `model_provider = "voidRoute"`,
-            `model = "${selectedModel}"`,
-            `model_catalog_json = "${catalogPath}"`
-          ].join('\n');
-
-          const providerTable = [
-            `[model_providers.voidRoute]`,
-            `name = "voidRoute"`,
-            `base_url = "${endpoint}"`,
-            `wire_api = "responses"`,
-            `api_key = "sk_voidRoute"`,
-            `requires_openai_auth = true`
-          ].join('\n');
-
-          const firstTableIdx = tomlContent.search(/^\[/m);
-          if (firstTableIdx !== -1) {
-            const before = tomlContent.slice(0, firstTableIdx).trim();
-            const after = tomlContent.slice(firstTableIdx).trim();
-            tomlContent = (before ? before + '\n\n' : '') + topKeys + '\n\n' + after;
-          } else {
-            tomlContent = (tomlContent ? tomlContent + '\n\n' : '') + topKeys;
-          }
-          tomlContent = tomlContent.trim() + '\n\n' + providerTable + '\n';
-          fs.writeFileSync(cxConfig, tomlContent);
-
-          let authData = {};
-          if (fs.existsSync(cxAuth)) { try { authData = JSON.parse(fs.readFileSync(cxAuth, 'utf8')); } catch (e) {} }
-          authData.auth_mode = "apikey";
-          authData.OPENAI_API_KEY = "sk_voidRoute";
-          fs.writeFileSync(cxAuth, JSON.stringify(authData, null, 2));
-
-          const modelIds = (allModelsForProvider && allModelsForProvider.length > 0)
-            ? allModelsForProvider
-            : [selectedModel];
-
-          if (modelIds.length > 0) {
-            let existing = { data: [], models: [] };
-            if (fs.existsSync(cxCache)) {
-              try { existing = JSON.parse(fs.readFileSync(cxCache, 'utf8')); } catch (e) {}
-            }
-
-            const now = Math.floor(Date.now() / 1000);
-            const voidRouteModels = modelIds.map(id => {
-              const parts = id.split('/');
-              const providerAlias = parts.length > 1 ? parts[0] : 'voidRoute';
-              const modelSlug = parts.length > 1 ? parts.slice(1).join('/') : id;
-              const displayName = `${providerAlias}/${modelSlug}`;
-              return {
-                slug: id,
-                display_name: displayName,
-                description: `Routed via voidRoute (${providerAlias})`,
-                provider_id: 'voidRoute',
-                wire_api: 'responses',
-                default_reasoning_level: 'medium',
-                supported_reasoning_levels: [
-                  { effort: 'low', description: 'Low reasoning' },
-                  { effort: 'medium', description: 'Medium reasoning' },
-                  { effort: 'high', description: 'High reasoning' },
-                ],
-                shell_type: 'shell_command',
-                visibility: 'list',
-                supported_in_api: true,
-                priority: 99,
-                context_window: 200000,
-                max_context_window: 200000,
-                input_modalities: ['text', 'image'],
-                supports_parallel_tool_calls: true,
-                use_responses_lite: true,
-              };
-            });
-
-            const mergedData = [...(existing.data || [])];
-            const mergedModels = [...(existing.models || [])];
-            for (const m of voidRouteModels) {
-              if (!mergedData.find(x => x.id === m.slug)) {
-                mergedData.push({ id: m.slug, object: 'model', created: now, owned_by: 'voidRoute' });
-              }
-              if (!mergedModels.find(x => x.slug === m.slug)) {
-                mergedModels.push(m);
-              }
-            }
-            existing.data = mergedData;
-            existing.models = mergedModels;
-            existing.fetched_at = new Date().toISOString();
-            if (!existing._voidRoute_backup) {
-              existing._voidRoute_backup = { data: [...(existing.data || [])], models: [...(existing.models || [])] };
-            }
-            fs.writeFileSync(cxCache, JSON.stringify(existing, null, 2));
-          }
-
-          console.log(chalk.green(`  ✅ Codex configured with OpenCodex multi-model routing via voidRoute.`));
-          if (modelIds.length > 1) {
-            console.log(chalk.cyan(`  📦 ${modelIds.length} models cached in ~/.codex/models_cache.json.`));
-          }
-          console.log(chalk.cyan(`  ℹ️  Restart Codex (close and reopen) then select models from the model picker.`));
-        } catch (e) { console.log(chalk.red(`  ❌ Failed to write config: ${e.message}`)); }
+        adapter.applyConfig(selectedModel, endpoint, endpointNoV1, providerModelsList, allModelsForProvider, defaultModelForTool);
       }
     }
     // ──── AIDER ───────────────────────────────────────────────────────────
     else if (tool === 'aider') {
-      const aiderPath = path.join(os.homedir(), '.aider.conf.yml');
-      
+      const adapter = getToolAdapter(tool);
       if (action === 'reset') {
-        try {
-          if (fs.existsSync(aiderPath)) {
-            let conf = fs.readFileSync(aiderPath, 'utf8');
-            conf = conf.replace(/^openai-api-base:.*$/gm, '').replace(/^openai-api-key:.*$/gm, '').replace(/^model:.*$/gm, '');
-            fs.writeFileSync(aiderPath, conf.replace(/\n{3,}/g, '\n\n').trim() + '\n');
-            console.log(chalk.green(`  ✅ voidRoute config removed from Aider.`));
-          } else {
-            console.log(chalk.gray('  No config file found.'));
-          }
-        } catch (e) { console.log(chalk.red(`  ❌ ${e.message}`)); }
+        adapter.resetConfig();
       } else {
-        try {
-          let conf = fs.existsSync(aiderPath) ? fs.readFileSync(aiderPath, 'utf8') : '';
-          conf = conf.replace(/^openai-api-base:.*$/gm, '').replace(/^openai-api-key:.*$/gm, '').replace(/^model:.*$/gm, '').trim();
-          const yamlContent = `
-openai-api-key: sk_voidRoute
-openai-api-base: ${endpoint}
-model: ${selectedModel}
-`;
-          fs.writeFileSync(aiderPath, conf.trim() + yamlContent + '\n');
-          console.log(chalk.green(`  ✅ Successfully updated ${aiderPath}`));
-        } catch (e) { console.log(chalk.red(`  ❌ Failed to write config: ${e.message}`)); }
+        adapter.applyConfig(selectedModel, endpoint, endpointNoV1);
       }
     }
     // ──── PI AGENT ────────────────────────────────────────────────────────
     else if (tool === 'pi') {
-      const piDir = path.join(os.homedir(), '.pi', 'agent');
-      const modelsPath = path.join(piDir, 'models.json');
-      const settingsPath = path.join(piDir, 'settings.json');
-      
+      const adapter = getToolAdapter(tool);
       if (action === 'reset') {
-        try {
-          if (fs.existsSync(modelsPath)) {
-            let m = JSON.parse(fs.readFileSync(modelsPath, 'utf8'));
-            if (m.providers) delete m.providers['voidRoute'];
-            fs.writeFileSync(modelsPath, JSON.stringify(m, null, 2));
-          }
-          if (fs.existsSync(settingsPath)) {
-            let s = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
-            if (s.defaultProvider === 'voidRoute') {
-              delete s.defaultProvider;
-              delete s.defaultModel;
-            }
-            fs.writeFileSync(settingsPath, JSON.stringify(s, null, 2));
-          }
-          console.log(chalk.green(`  ✅ voidRoute config removed from Pi Agent.`));
-        } catch (e) { console.log(chalk.red(`  ❌ ${e.message}`)); }
+        adapter.resetConfig();
       } else {
-        try {
-          if (!fs.existsSync(piDir)) fs.mkdirSync(piDir, { recursive: true });
-          
-          // Write models.json with voidRoute provider
-          let modelsData = {};
-          if (fs.existsSync(modelsPath)) {
-            try { modelsData = JSON.parse(fs.readFileSync(modelsPath, 'utf8')); } catch (e) { }
-          }
-          if (!modelsData.providers) modelsData.providers = {};
-          
-          let piModels = [];
-
-          if (allModelsForPi && providerModelsList.length > 0) {
-            for (const m of providerModelsList) {
-              if (!piModels.find(x => x.id === m.id)) {
-                piModels.push({ id: m.id, name: m.name || m.id });
-              }
-            }
-            selectedModel = defaultModelForTool;
-            console.log(chalk.cyan(`  📦 Registered ${piModels.length} models for Pi Agent`));
-          } else if (providerModelsList.length > 0) {
-            // Single model only
-            piModels.push({ id: selectedModel, name: selectedModel });
-          } else {
-            piModels.push({ id: selectedModel, name: selectedModel });
-          }
-
-          modelsData.providers['voidRoute'] = {
-            baseUrl: endpoint,
-            apiKey: "sk_voidRoute",
-            api: "openai-completions",
-            models: piModels,
-          };
-          fs.writeFileSync(modelsPath, JSON.stringify(modelsData, null, 2));
-          
-          // Update settings.json with voidRoute as default
-          let settingsData = {};
-          if (fs.existsSync(settingsPath)) {
-            try { settingsData = JSON.parse(fs.readFileSync(settingsPath, 'utf8')); } catch (e) { }
-          }
-          settingsData.defaultProvider = 'voidRoute';
-          settingsData.defaultModel = selectedModel;
-          fs.writeFileSync(settingsPath, JSON.stringify(settingsData, null, 2));
-          
-          console.log(chalk.green(`  ✅ Successfully updated Pi Agent config:`));
-          console.log(chalk.gray(`     ${modelsPath}`));
-          console.log(chalk.gray(`     ${settingsPath}`));
-          console.log(chalk.gray(`     Default model: ${selectedModel}`));
-        } catch (e) { console.log(chalk.red(`  ❌ Failed to write config: ${e.message}`)); }
+        adapter.applyConfig(selectedModel, endpoint, endpointNoV1, providerModelsList, allModelsForProvider, defaultModelForTool, allModelsForPi);
       }
     }
     // ──── CLINE ───────────────────────────────────────────────────────────
     else if (tool === 'cline') {
-      const clineDataDir = path.join(os.homedir(), '.cline', 'data');
-      const globalStatePath = path.join(clineDataDir, 'globalState.json');
-      const secretsPath = path.join(clineDataDir, 'secrets.json');
-      
+      const adapter = getToolAdapter(tool);
       if (action === 'reset') {
-        try {
-          if (fs.existsSync(globalStatePath)) {
-            let gs = JSON.parse(fs.readFileSync(globalStatePath, 'utf8'));
-            if (gs.actModeApiProvider === 'openai') {
-              delete gs.openAiBaseUrl;
-              delete gs.openAiModelId;
-              delete gs.planModeOpenAiModelId;
-              gs.actModeApiProvider = 'cline';
-              gs.planModeApiProvider = 'cline';
-            }
-            fs.writeFileSync(globalStatePath, JSON.stringify(gs, null, 2));
-          }
-          if (fs.existsSync(secretsPath)) {
-            let sec = JSON.parse(fs.readFileSync(secretsPath, 'utf8'));
-            delete sec.openAiApiKey;
-            fs.writeFileSync(secretsPath, JSON.stringify(sec, null, 2));
-          }
-          console.log(chalk.green(`  ✅ voidRoute config removed from Cline.`));
-        } catch (e) { console.log(chalk.red(`  ❌ ${e.message}`)); }
+        adapter.resetConfig();
       } else {
-        try {
-          if (!fs.existsSync(clineDataDir)) fs.mkdirSync(clineDataDir, { recursive: true });
-          // Cline expects base WITHOUT /v1
-          let gs = {};
-          if (fs.existsSync(globalStatePath)) { try { gs = JSON.parse(fs.readFileSync(globalStatePath, 'utf8')); } catch (e) {} }
-          gs.actModeApiProvider = 'openai';
-          gs.planModeApiProvider = 'openai';
-          gs.openAiBaseUrl = endpointNoV1;
-          gs.openAiModelId = selectedModel;
-          gs.planModeOpenAiModelId = selectedModel;
-          fs.writeFileSync(globalStatePath, JSON.stringify(gs, null, 2));
-          
-          let sec = {};
-          if (fs.existsSync(secretsPath)) { try { sec = JSON.parse(fs.readFileSync(secretsPath, 'utf8')); } catch (e) {} }
-          sec.openAiApiKey = 'sk_voidRoute';
-          fs.writeFileSync(secretsPath, JSON.stringify(sec, null, 2));
-          
-          console.log(chalk.green(`  ✅ Successfully updated Cline config.`));
-          console.log(chalk.gray(`     ${globalStatePath}`));
-        } catch (e) { console.log(chalk.red(`  ❌ Failed to write config: ${e.message}`)); }
+        adapter.applyConfig(selectedModel, endpoint, endpointNoV1);
       }
     }
-    // ──── CURSOR (MANUAL) ─────────────────────────────────────────────────
+    // ──── HERMES AGENT ─────────────────────────────────────────────────────
     else if (tool === 'hermes') {
-      const adapter = new HermesAdapter();
+      const adapter = getToolAdapter(tool);
       if (action === 'reset') {
         adapter.resetConfig();
       } else {
@@ -2063,7 +1578,7 @@ model: ${selectedModel}
         );
       }
     }
-    // Hermes Agent
+    // ──── CURSOR (MANUAL) ─────────────────────────────────────────────────
     else if (tool === 'manual') {
       console.log(chalk.white('  In Cursor:'));
       console.log(chalk.gray('  1. Go to Settings → Models'));

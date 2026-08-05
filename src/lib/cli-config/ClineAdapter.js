@@ -20,8 +20,8 @@ export class ClineAdapter extends BaseAdapter {
     } catch (e) { return null; }
   }
   resetConfig() {
-    const clineDataDir = path.join(os.homedir(), '.cline', 'data');
-    const globalStatePath = path.join(clineDataDir, 'globalState.json');
+    const globalStatePath = this.getConfigPath();
+    const clineDataDir = path.dirname(globalStatePath);
     const secretsPath = path.join(clineDataDir, 'secrets.json');
     try {
       if (fs.existsSync(globalStatePath)) {
@@ -44,8 +44,8 @@ export class ClineAdapter extends BaseAdapter {
     } catch (e) { console.log(chalk.red(`  ❌ ${e.message}`)); }
   }
   applyConfig(model, endpoint, endpointNoV1) {
-    const clineDataDir = path.join(os.homedir(), '.cline', 'data');
-    const globalStatePath = path.join(clineDataDir, 'globalState.json');
+    const globalStatePath = this.getConfigPath();
+    const clineDataDir = path.dirname(globalStatePath);
     const secretsPath = path.join(clineDataDir, 'secrets.json');
     try {
       if (!fs.existsSync(clineDataDir)) fs.mkdirSync(clineDataDir, { recursive: true });
