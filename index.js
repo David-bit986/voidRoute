@@ -32,18 +32,20 @@ function createNextRequest(req) {
 app.get('/v1/models', async (req, res) => {
   try {
     const { getProviderConnections } = await import('#lib/localDb.js');
-    const { PROVIDER_MODELS } = await import('./open-sse/config/providerModels.js');
-    const { getProviderAlias } = await import('./src/shared/constants/providers.js');
+    const { getModelsByProviderId, PROVIDER_ID_TO_ALIAS } = await import('./open-sse/config/providerModels.js');
     
     const connections = await getProviderConnections();
     const modelsList = [];
     
     for (const conn of connections) {
-      const list = PROVIDER_MODELS[conn.providerId];
-      if (list) {
+      const pid = conn.provider || conn.providerId;
+      const alias = PROVIDER_ID_TO_ALIAS[pid] || pid;
+      const list = getModelsByProviderId(pid);
+      if (list && list.length > 0) {
         for (const m of list) {
-          const alias = getProviderAlias ? getProviderAlias(conn.providerId) : conn.providerId;
-          const id = alias ? `${alias}/${m}` : m;
+          if (m.type === 'image' || m.type === 'embedding' || m.type === 'tts' || m.type === 'stt') continue;
+          const modelId = typeof m === 'string' ? m : m.id;
+          const id = alias ? `${alias}/${modelId}` : modelId;
           if (!modelsList.find(x => x.id === id)) {
             modelsList.push({ id, object: 'model', created: Date.now(), owned_by: 'voidRoute' });
           }
