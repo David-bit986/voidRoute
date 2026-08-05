@@ -16,8 +16,14 @@ export function filterToOpenAIFormat(body) {
     // Keep tool messages as-is (OpenAI format)
     if (msg.role === "tool") return msg;
     
-    // Keep assistant messages with tool_calls as-is
-    if (msg.role === "assistant" && msg.tool_calls) return msg;
+    // Keep assistant messages with tool_calls as-is (never forward an empty tool_calls array)
+    if (msg.role === "assistant" && msg.tool_calls) {
+      if (Array.isArray(msg.tool_calls) && msg.tool_calls.length === 0) {
+        const { tool_calls, ...cleanMsg } = msg;
+        return cleanMsg;
+      }
+      return msg;
+    }
     
     // Handle string content
     if (typeof msg.content === "string") return msg;
@@ -61,7 +67,7 @@ export function filterToOpenAIFormat(body) {
     // Always keep tool messages
     if (msg.role === "tool") return true;
     // Always keep assistant messages with tool_calls
-    if (msg.role === "assistant" && msg.tool_calls) return true;
+    if (msg.role === "assistant" && Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0) return true;
     
     if (typeof msg.content === "string") return msg.content.trim() !== "";
     if (Array.isArray(msg.content)) {

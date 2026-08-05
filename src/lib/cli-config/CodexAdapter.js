@@ -1,73 +1,73 @@
 import fs from 'fs';
 import path from 'path';
-import os from 'os';
 import chalk from 'chalk';
 import { BaseAdapter } from './BaseAdapter.js';
+import {
+  getCatalogPath,
+  getCodexHome,
+  getStatePath,
+  LIFECYCLE_MARKER,
+} from './CodexCatalog.js';
+import { CodexLifecycle } from './CodexLifecycle.js';
 
 export class CodexAdapter extends BaseAdapter {
-  constructor() { super('codex', 'OpenAI Codex'); }
-  resolveConfigPath() {
-    const home = os.homedir();
-    return [path.join(home, '.codex', 'config.toml')];
+  constructor(options = {}) {
+    super('codex', 'OpenAI Codex');
+    this.lifecycle = new CodexLifecycle(options);
   }
+
+  resolveConfigPath() {
+    return [path.join(getCodexHome(), 'config.toml')];
+  }
+
+  getConfigPath() {
+    return path.join(getCodexHome(), 'config.toml');
+  }
+
   detectStatus() {
     try {
-      const paths = this.resolveConfigPath();
-      const found = paths.find(p => fs.existsSync(p));
-      if (!found) return null;
-      return fs.readFileSync(found, 'utf8').includes('voidRoute') ? 'connected' : null;
-    } catch (e) { return null; }
-  }
-  resetConfig() {
-    const cxDir = path.join(os.homedir(), '.codex');
-    const cxConfig = path.join(cxDir, 'config.toml');
-    const cxAuth = path.join(cxDir, 'auth.json');
-    try {
-      if (fs.existsSync(cxConfig)) {
-        let toml = fs.readFileSync(cxConfig, 'utf8');
-        toml = toml.replace(/\[model_providers\.voidRoute\][\s\S]*?(?=\n\[|$)/g, '');
-        if (toml.match(/model_provider\s*=\s*"voidRoute"/)) {
-          toml = toml.replace(/model_provider\s*=\s*"voidRoute"/, '');
-          toml = toml.replace(/^model\s*=.*$/m, '');
-        }
-        fs.writeFileSync(cxConfig, toml.replace(/\n{3,}/g, '\n\n').trim() + '\n');
+      if (fs.existsSync(getStatePath())) {
+        const state = JSON.parse(fs.readFileSync(getStatePath(), 'utf8'));
+        if (state?.owner?.marker === LIFECYCLE_MARKER && state.status === 'applied') return 'connected';
       }
-      if (fs.existsSync(cxAuth)) {
-        let auth = JSON.parse(fs.readFileSync(cxAuth, 'utf8'));
-        if (auth.auth_mode === 'apikey' && auth.OPENAI_API_KEY === 'sk_voidRoute') {
-          delete auth.OPENAI_API_KEY;
-          delete auth.auth_mode;
-        }
-        fs.writeFileSync(cxAuth, JSON.stringify(auth, null, 2));
-      }
-      console.log(chalk.green(`  ✅ voidRoute config removed from Codex.`));
-    } catch (e) { console.log(chalk.red(`  ❌ ${e.message}`)); }
+      return null;
+    } catch {
+      return null;
+    }
   }
-  applyConfig(model, endpoint, endpointNoV1) {
-    const cxDir = path.join(os.homedir(), '.codex');
-    const cxConfig = path.join(cxDir, 'config.toml');
-    const cxAuth = path.join(cxDir, 'auth.json');
-    try {
-      if (!fs.existsSync(cxDir)) fs.mkdirSync(cxDir, { recursive: true });
-      let tomlContent = fs.existsSync(cxConfig) ? fs.readFileSync(cxConfig, 'utf8') : '';
-      
-      if (tomlContent.match(/model_provider\s*=/)) tomlContent = tomlContent.replace(/model_provider\s*=\s*".*"/, `model_provider = "voidRoute"`);
-      else tomlContent = `model_provider = "voidRoute"\n` + tomlContent;
-      
-      if (tomlContent.match(/^model\s*=/m)) tomlContent = tomlContent.replace(/^model\s*=\s*".*"/m, `model = "${model}"`);
-      else tomlContent = `model = "${model}"\n` + tomlContent;
 
-      if (!tomlContent.includes('[model_providers.voidRoute]')) {
-        tomlContent += `\n[model_providers.voidRoute]\nname = "voidRoute"\nbase_url = "${endpoint}"\nwire_api = "responses"\n`;
+  resetConfig() {
+    try {
+      const result = this.lifecycle.reset();
+      if (result.reset) console.log(chalk.green('  ✅ voidRoute config removed from Codex.'));
+      else console.log(chalk.gray('  No voidRoute Codex lifecycle state found.'));
+      return result;
+    } catch (error) {
+      console.log(chalk.red(`  ❌ ${error.message}`));
+      return { reset: false, error };
+    }
+  }
+
+  applyConfig(model, endpoint, endpointNoV1, providerModelsList = [], allModelsForProvider = null, defaultModelForTool = null) {
+    try {
+      const result = this.lifecycle.apply({
+        model,
+        endpoint,
+        endpointNoV1,
+        providerModelsList,
+        allModelsForProvider,
+        defaultModelForTool,
+      });
+      console.log(chalk.green('  ✅ Codex configured with OpenCodex multi-model routing via voidRoute.'));
+      if (result.modelIds.length > 1) {
+        console.log(chalk.cyan(`  📦 Registered ${result.modelIds.length} models in ${path.basename(result.catalogPath)}.`));
       }
-      fs.writeFileSync(cxConfig, tomlContent.trim() + '\n');
-      let authData = {};
-      if (fs.existsSync(cxAuth)) { try { authData = JSON.parse(fs.readFileSync(cxAuth, 'utf8')); } catch (e) {} }
-      authData.OPENAI_API_KEY = "sk_voidRoute"; authData.auth_mode = "apikey";
-      fs.writeFileSync(cxAuth, JSON.stringify(authData, null, 2));
-      console.log(chalk.green(`  ✅ Successfully updated ${cxConfig}`));
-      console.log(chalk.yellow(`  ⚠️  Note: The Codex app only supports a single custom model at a time.`));
-      console.log(chalk.yellow(`      It will display as "Custom Model" in the app UI, but will route correctly.`));
-    } catch (e) { console.log(chalk.red(`  ❌ Failed to write config: ${e.message}`)); }
+      console.log(chalk.cyan(`  📦 Refreshed Codex models cache (models_cache.json) with ${result.modelIds.length} models.`));
+      console.log(chalk.cyan('  ℹ️  Restart Codex (close and reopen) then select models from the model picker.'));
+      return result;
+    } catch (error) {
+      console.log(chalk.red(`  ❌ Failed to write config: ${error.message}`));
+      return { applied: false, error };
+    }
   }
 }

@@ -19,13 +19,13 @@ This project uses the database schema, token rotation, and SSE proxy backend fro
   bun run fetch-models.mjs --provider deepseek --key sk-xxx
   bun run fetch-models.mjs --url https://api.deepseek.com/models --key sk-xxx
   ```
-* **Single vs. Multi-Model Configuration**: When configuring a CLI tool, you can pick a **single default model** or, for tools that support it (OpenCode, Pi Agent), register **ALL models** from a provider in one step.
+* **Single vs. Multi-Model Configuration**: When configuring a CLI tool, you can pick a **single default model** or, for tools that support it (OpenCode, Pi Agent, OpenAI Codex), register **ALL models** from a provider in one step.
 * **Config Path Detection**: Automatically finds CLI tool configs even if installed in non-standard locations (e.g., `~/.openclaude/settings.json` vs `~/.claude/settings.json`).
 * **Automated Tool Configuration**: Generates and deletes configuration files for:
   * **Claude Code** (`~/.claude/settings.json`)
   * **OpenClaude** (`~/.openclaude/settings.json`) — uses OpenAI-compatible routing for non-Anthropic models
   * **OpenCode** (`~/.config/opencode/opencode.json`) — **multi-model** capable
-  * **OpenAI Codex** (`~/.codex/config.toml`)
+  * **OpenAI Codex** (`~/.codex/config.toml` & `models_cache.json`) — **multi-model** capable (OpenCodex)
   * **Aider** (`~/.aider.conf.yml`)
   * **Pi Agent** (`~/.pi/agent/models.json`) — **multi-model** capable
   * **Cline** (`~/.cline/data/globalState.json`)
@@ -43,7 +43,7 @@ This project uses the database schema, token rotation, and SSE proxy backend fro
 | **OpenClaude** | Single | Smart routing: non-Anthropic models use OpenAI-compatible mode |
 | **OpenCode** | **Multi** ✅ | Registers all models under `provider.voidRoute.models` |
 | **Pi Agent** | **Multi** ✅ | Registers all models under `providers.voidRoute.models` |
-| **OpenAI Codex** | Single | Sets 1 model in `config.toml` |
+| **OpenAI Codex** | **Multi** ✅ | OpenCodex proxy routing via `config.toml` & `models_cache.json` — use any LLM in Codex CLI/App |
 | **Aider** | Single | Sets 1 model in `.aider.conf.yml` |
 | **Cline** | Single | Sets 1 model in `globalState.json` |
 | **Cursor** | — | Manual configuration required |
@@ -67,7 +67,24 @@ When you select a tool that supports multi-model, you'll be asked: *"Register AL
    bun index.js
    ```
 
-On Windows, double-click **`Start_voidRoute.bat`** to start immediately.
+On Windows, double-click **`voidRoute.bat`** on the Desktop, or
+**`voidRoute-Codex-Patched.bat`**, to start the proxy and the patched Codex Desktop picker.
+
+### Codex Desktop Routed Picker (Experimental)
+
+The current Windows Codex Desktop filters routed `provider/model` rows from its picker even though
+the Codex app-server accepts them. To use the local picker workaround, run:
+
+```bash
+bun run tools/patch-codex-desktop.mjs --launch
+```
+
+Or double-click **`voidRoute-Codex-Patched.bat`**. The tool copies the installed Codex package into
+`%LOCALAPPDATA%\voidRoute\codex-desktop-patched`, patches only the copy's `app.asar`, and launches it
+with a separate user-data directory. The original Windows Store installation is not modified.
+
+Re-run the patcher after a Codex Desktop update. This is an experimental local workaround for the
+upstream Desktop picker allowlist; the normal Codex CLI/TUI and original Desktop remain unchanged.
 
 ---
 

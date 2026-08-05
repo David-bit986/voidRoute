@@ -1,4 +1,4 @@
-import { getProviderConnections, validateApiKey, updateProviderConnection, getSettings } from "#lib/localDb.js";
+import { getProviderConnections, validateApiKey, updateProviderConnection, getSettings } from "#lib/db/index.js";
 import { resolveConnectionProxyConfig } from "#lib/network/connectionProxy.js";
 import { formatRetryAfter, checkFallbackError, isModelLockActive, buildModelLockUpdate, getEarliestModelLockUntil } from "#open-sse/services/accountFallback.js";
 import { MAX_RATE_LIMIT_COOLDOWN_MS } from "#open-sse/config/errorConfig.js";

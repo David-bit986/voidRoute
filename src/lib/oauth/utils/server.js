@@ -201,7 +201,7 @@ export function startCodexProxy(appPort) {
 
           // Lazy import to avoid circular deps
           const { exchangeTokens } = await import("../providers.js");
-          const { createProviderConnection } = await import("#models");
+          const { createProviderConnection } = await import("#lib/db/index.js");
 
           const tokenData = await exchangeTokens(
             "codex",
@@ -343,7 +343,7 @@ export function startXaiProxy(appPort) {
           if (!code) throw new Error("No authorization code received");
 
           const { exchangeTokens } = await import("../providers.js");
-          const { createProviderConnection } = await import("#models");
+          const { createProviderConnection } = await import("#lib/db/index.js");
 
           const tokenData = await exchangeTokens(
             "xai",

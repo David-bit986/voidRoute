@@ -106,7 +106,7 @@ export const CLI_TOOLS = {
     name: "OpenAI Codex CLI / App",
     image: "/providers/codex.png",
     color: "#10A37F",
-    description: "OpenAI Codex CLI",
+    description: "OpenAI Codex CLI / App (OpenCodex Universal Multi-Model Proxy)",
     configType: "custom",
   },
   opencode: {

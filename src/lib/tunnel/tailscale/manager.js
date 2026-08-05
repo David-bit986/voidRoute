@@ -1,7 +1,7 @@
 import { loadState, generateShortId } from "../shared/state.js";
 import { startFunnel, stopFunnel, isTailscaleRunning, isTailscaleRunningStrict, isTailscaleLoggedIn, startLogin, startDaemonWithPassword, provisionCert } from "./tailscale.js";
 import { waitForHealth } from "./healthCheck.js";
-import { getSettings, updateSettings } from "#lib/localDb";
+import { getSettings, updateSettings } from "#lib/db/index.js";
 import { getCachedPassword, loadEncryptedPassword, initDbHooks } from "#mitm/manager";
 
 initDbHooks(getSettings, updateSettings);

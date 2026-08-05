@@ -1,18 +1,17 @@
 import {
-  getProviderCredentials,
-  markAccountUnavailable,
   clearAccountError,
   extractApiKey,
   isValidApiKey,
 } from "../services/auth.js";
-import { getSettings, getCombos } from "#lib/localDb";
+import { getSettings, getCombos } from "#lib/db/index.js";
 import { AI_PROVIDERS, resolveProviderId } from "#shared/constants/providers.js";
 import { handleSearchCore } from "#open-sse/handlers/search/index.js";
-import { errorResponse, unavailableResponse } from "#open-sse/utils/error.js";
+import { errorResponse } from "#open-sse/utils/error.js";
 import { HTTP_STATUS } from "#open-sse/config/runtimeConfig.js";
 import * as log from "../utils/logger.js";
-import { updateProviderCredentials, checkAndRefreshToken } from "../services/tokenRefresh.js";
+import { updateProviderCredentials } from "../services/tokenRefresh.js";
 import { handleComboChat, getComboModelsFromData } from "#open-sse/services/combo.js";
+import { ConnectionPool } from "../services/ConnectionPool.js";
 
 /**
  * Handle web search request for the SSE/Next.js server.
@@ -143,34 +142,11 @@ async function handleSingleProviderSearch(body, providerInput, request, apiKey, 
     return result.response;
   }
 
-  // Credential + fallback loop
-  const excludeConnectionIds = new Set();
-  let lastError = null;
-  let lastStatus = null;
+  // Credential + fallback loop via shared ConnectionPool
+  const pool = new ConnectionPool(providerId, null, { logLabel: "SEARCH" });
 
-  while (true) {
-    const credentials = await getProviderCredentials(providerId, excludeConnectionIds);
-
-    if (!credentials || credentials.allRateLimited) {
-      if (credentials?.allRateLimited) {
-        const errorMsg = lastError || credentials.lastError || "Unavailable";
-        const status = lastStatus || Number(credentials.lastErrorCode) || HTTP_STATUS.SERVICE_UNAVAILABLE;
-        log.warn("SEARCH", `[${providerId}] ${errorMsg} (${credentials.retryAfterHuman})`);
-        return unavailableResponse(status, `[${providerId}] ${errorMsg}`, credentials.retryAfter, credentials.retryAfterHuman);
-      }
-      if (excludeConnectionIds.size === 0) {
-        log.error("AUTH", `No credentials for provider: ${providerId}`);
-        return errorResponse(HTTP_STATUS.BAD_REQUEST, `No credentials for provider: ${providerId}`);
-      }
-      log.warn("SEARCH", "No more accounts available", { provider: providerId });
-      return errorResponse(lastStatus || HTTP_STATUS.SERVICE_UNAVAILABLE, lastError || "All accounts unavailable");
-    }
-
-    log.info("AUTH", `\x1b[32mUsing ${providerId} account: ${credentials.connectionName}\x1b[0m`);
-
-    const refreshedCredentials = await checkAndRefreshToken(providerId, credentials);
-
-    const result = await handleSearchCore({
+  return pool.execute(async (refreshedCredentials, credentials) => {
+    return await handleSearchCore({
       body: coreBody,
       provider: resolvedProvider,
       providerConfig,
@@ -188,19 +164,5 @@ async function handleSingleProviderSearch(body, providerInput, request, apiKey, 
         await clearAccountError(credentials.connectionId, credentials);
       }
     });
-
-    if (result.success) return result.response;
-
-    const { shouldFallback } = await markAccountUnavailable(credentials.connectionId, result.status, result.error, providerId);
-
-    if (shouldFallback) {
-      log.warn("AUTH", `Account ${credentials.connectionName} unavailable (${result.status}), trying fallback`);
-      excludeConnectionIds.add(credentials.connectionId);
-      lastError = result.error;
-      lastStatus = result.status;
-      continue;
-    }
-
-    return result.response;
-  }
+  });
 }

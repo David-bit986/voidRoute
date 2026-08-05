@@ -1,17 +1,16 @@
 import {
-  getProviderCredentials,
-  markAccountUnavailable,
   clearAccountError,
   extractApiKey,
   isValidApiKey,
 } from "../services/auth.js";
-import { getSettings } from "#lib/localDb";
+import { getSettings } from "#lib/db/index.js";
 import { getModelInfo, getComboModels } from "../services/model.js";
 import { handleImageGenerationCore } from "#open-sse/handlers/imageGenerationCore.js";
-import { errorResponse, unavailableResponse } from "#open-sse/utils/error.js";
+import { errorResponse } from "#open-sse/utils/error.js";
 import { HTTP_STATUS } from "#open-sse/config/runtimeConfig.js";
-import { updateProviderCredentials, checkAndRefreshToken } from "../services/tokenRefresh.js";
+import { updateProviderCredentials } from "../services/tokenRefresh.js";
 import { handleComboChat } from "#open-sse/services/combo.js";
+import { ConnectionPool } from "../services/ConnectionPool.js";
 import * as log from "../utils/logger.js";
 
 // Providers that don't require credentials (noAuth)
@@ -85,29 +84,14 @@ async function handleSingleModelImage(body, modelStr, { wantsStream, binaryOutpu
     return errorResponse(result.status || HTTP_STATUS.BAD_GATEWAY, result.error || "Image generation failed");
   }
 
-  // Credentialed providers — fallback loop
-  const excludeConnectionIds = new Set();
-  let lastError = null;
-  let lastStatus = null;
+  // Credentialed providers — credential + fallback loop via shared ConnectionPool
+  const pool = new ConnectionPool(provider, model, {
+    logLabel: "IMAGE",
+    credentialsOptions: { preferredConnectionId },
+  });
 
-  while (true) {
-    const credentials = await getProviderCredentials(provider, excludeConnectionIds, model, { preferredConnectionId });
-
-    if (!credentials || credentials.allRateLimited) {
-      if (credentials?.allRateLimited) {
-        const errorMsg = lastError || credentials.lastError || "Unavailable";
-        const status = lastStatus || Number(credentials.lastErrorCode) || HTTP_STATUS.SERVICE_UNAVAILABLE;
-        return unavailableResponse(status, `[${provider}/${model}] ${errorMsg}`, credentials.retryAfter, credentials.retryAfterHuman);
-      }
-      if (excludeConnectionIds.size === 0) {
-        return errorResponse(HTTP_STATUS.BAD_REQUEST, `No credentials for provider: ${provider}`);
-      }
-      return errorResponse(lastStatus || HTTP_STATUS.SERVICE_UNAVAILABLE, lastError || "All accounts unavailable");
-    }
-
-    const refreshedCredentials = await checkAndRefreshToken(provider, credentials);
-
-    const result = await handleImageGenerationCore({
+  return pool.execute(async (refreshedCredentials, credentials) => {
+    return await handleImageGenerationCore({
       body,
       modelInfo: { provider, model },
       credentials: refreshedCredentials,
@@ -125,18 +109,5 @@ async function handleSingleModelImage(body, modelStr, { wantsStream, binaryOutpu
         await clearAccountError(credentials.connectionId, credentials, model);
       }
     });
-
-    if (result.success) return result.response;
-
-    const { shouldFallback } = await markAccountUnavailable(credentials.connectionId, result.status, result.error, provider, model);
-
-    if (shouldFallback) {
-      excludeConnectionIds.add(credentials.connectionId);
-      lastError = result.error;
-      lastStatus = result.status;
-      continue;
-    }
-
-    return result.response;
-  }
+  });
 }

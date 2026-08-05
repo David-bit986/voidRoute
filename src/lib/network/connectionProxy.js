@@ -1,4 +1,4 @@
-import { getProxyPoolById } from "#models";
+import { getProxyPoolById } from "#lib/db/index.js";
 
 // Safely normalize any value into a trimmed string.
 function normalizeString(value) {

@@ -1,19 +1,27 @@
 // Re-export from open-sse with localDb integration
-import { getModelAliases, getProviderNodes } from "#lib/localDb";
-import { parseModel as parseModelCore, resolveModelAliasFromMap, getModelInfoCore } from "#open-sse/services/model.js";
+import { getModelAliases, getProviderNodes, getCombos } from "#lib/db/index.js";
+import {
+  formatModelReference,
+  parseModel as parseModelCore,
+  resolveModelAliasFromMap,
+  getModelInfoCore,
+} from "#open-sse/services/model.js";
+import { getComboModelsFromData } from "#open-sse/services/combo.js";
 
-// Local provider alias overrides (HMR-friendly, applied on top of open-sse map)
-const LOCAL_PROVIDER_ALIASES = {
-  xmtp: "xiaomi-tokenplan",
-  "xiaomi-tokenplan": "xiaomi-tokenplan",
-};
+export { formatModelReference };
 
 export function parseModel(modelStr) {
-  const parsed = parseModelCore(modelStr);
-  if (parsed?.providerAlias && LOCAL_PROVIDER_ALIASES[parsed.providerAlias]) {
-    return { ...parsed, provider: LOCAL_PROVIDER_ALIASES[parsed.providerAlias] };
-  }
-  return parsed;
+  return parseModelCore(modelStr);
+}
+
+/**
+ * Resolve a combo name to its list of member models.
+ * Returns null if the name is not a combo.
+ */
+export async function getComboModels(modelStr) {
+  if (!modelStr || typeof modelStr !== "string" || modelStr.includes("/")) return null;
+  const combos = await getCombos();
+  return getComboModelsFromData(modelStr, combos);
 }
 
 /**

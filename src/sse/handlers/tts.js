@@ -1,14 +1,15 @@
 import {
   extractApiKey, isValidApiKey,
-  getProviderCredentials, markAccountUnavailable,
+  clearAccountError,
 } from "../services/auth.js";
-import { getSettings } from "#lib/localDb";
+import { getSettings } from "#lib/db/index.js";
 import { getModelInfo, getComboModels } from "../services/model.js";
 import { handleTtsCore } from "#open-sse/handlers/ttsCore.js";
-import { errorResponse, unavailableResponse } from "#open-sse/utils/error.js";
+import { errorResponse } from "#open-sse/utils/error.js";
 import { HTTP_STATUS } from "#open-sse/config/runtimeConfig.js";
 import { AI_PROVIDERS } from "#shared/constants/providers";
 import { handleComboChat } from "#open-sse/services/combo.js";
+import { ConnectionPool } from "../services/ConnectionPool.js";
 import * as log from "../utils/logger.js";
 
 // Derived from providers.js: any TTS provider not noAuth requires stored credentials
@@ -78,37 +79,15 @@ async function handleSingleModelTts(body, modelStr, responseFormat, language) {
     return errorResponse(result.status || HTTP_STATUS.BAD_GATEWAY, result.error || "TTS failed");
   }
 
-  // Credentialed providers — fallback loop (same pattern as embeddings)
-  const excludeConnectionIds = new Set();
-  let lastError = null;
-  let lastStatus = null;
+  // Credentialed providers — credential + refresh + fallback via shared ConnectionPool
+  const pool = new ConnectionPool(provider, model, {
+    logLabel: "TTS",
+    onSuccess: async (credentials) => {
+      await clearAccountError(credentials.connectionId, credentials, model);
+    },
+  });
 
-  while (true) {
-    const credentials = await getProviderCredentials(provider, excludeConnectionIds, model);
-
-    if (!credentials || credentials.allRateLimited) {
-      if (credentials?.allRateLimited) {
-        const msg = lastError || credentials.lastError || "Unavailable";
-        const status = lastStatus || Number(credentials.lastErrorCode) || HTTP_STATUS.SERVICE_UNAVAILABLE;
-        return unavailableResponse(status, `[${provider}/${model}] ${msg}`, credentials.retryAfter, credentials.retryAfterHuman);
-      }
-      if (excludeConnectionIds.size === 0) return errorResponse(HTTP_STATUS.BAD_REQUEST, `No credentials for provider: ${provider}`);
-      return errorResponse(lastStatus || HTTP_STATUS.SERVICE_UNAVAILABLE, lastError || "All accounts unavailable");
-    }
-
-    log.info("AUTH", `\x1b[32mUsing ${provider} account: ${credentials.connectionName}\x1b[0m`);
-
-    const result = await handleTtsCore({ provider, model, input: body.input, credentials, responseFormat, language });
-
-    if (result.success) return result.response;
-
-    const { shouldFallback } = await markAccountUnavailable(credentials.connectionId, result.status, result.error, provider, model);
-    if (shouldFallback) {
-      excludeConnectionIds.add(credentials.connectionId);
-      lastError = result.error;
-      lastStatus = result.status;
-      continue;
-    }
-    return result.response || errorResponse(result.status, result.error);
-  }
+  return pool.execute(async (refreshedCredentials) => {
+    return await handleTtsCore({ provider, model, input: body.input, credentials: refreshedCredentials, responseFormat, language });
+  });
 }

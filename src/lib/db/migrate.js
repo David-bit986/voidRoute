@@ -7,6 +7,12 @@ import { getMetaSync, setMetaSync } from "./helpers/metaStore.js";
 import { makeBackupDir, backupFile, pruneOldBackups } from "./backup.js";
 import { getAppVersion } from "./version.js";
 import { stringifyJson } from "./helpers/jsonCol.js";
+import {
+  insertSettingsRow, insertConnectionRow, insertNodeRow,
+  insertProxyPoolRow, insertApiKeyRow, insertComboRow,
+  insertModelAliasRows, insertCustomModelRows,
+  insertMitmAliasRows, insertPricingRows,
+} from "./portable.js";
 
 // Marker file: prevents re-importing legacy JSON when user wipes data.sqlite.
 const MIGRATED_MARKER = path.join(DB_DIR, ".migrated-from-json");
@@ -112,61 +118,22 @@ function syncSchemaFromTables(adapter) {
 function importLegacyMain(adapter, data) {
   if (!data || typeof data !== "object") return;
 
-  if (data.settings) {
-    adapter.run(`INSERT INTO settings(id, data) VALUES(1, ?) ON CONFLICT(id) DO UPDATE SET data = excluded.data`, [stringifyJson(data.settings)]);
-  }
+  insertSettingsRow(adapter, data.settings);
 
-  importWithAssertion(adapter, "providerConnections", data.providerConnections || [], (c) => {
-    const { id, provider, authType, name, email, priority, isActive, createdAt, updatedAt, ...rest } = c;
-    adapter.run(
-      `INSERT OR REPLACE INTO providerConnections(id, provider, authType, name, email, priority, isActive, data, createdAt, updatedAt) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [id, provider, authType || "oauth", name || null, email || null, priority || null, isActive === false ? 0 : 1, stringifyJson(rest), createdAt || new Date().toISOString(), updatedAt || new Date().toISOString()]
-    );
-  }, (c) => ({ id: c.id ?? null, provider: c.provider ?? null, name: c.name ?? null }));
+  importWithAssertion(adapter, "providerConnections", data.providerConnections || [], (c) => insertConnectionRow(adapter, c), (c) => ({ id: c.id ?? null, provider: c.provider ?? null, name: c.name ?? null }));
 
-  importWithAssertion(adapter, "providerNodes", data.providerNodes || [], (n) => {
-    const { id, type, name, createdAt, updatedAt, ...rest } = n;
-    adapter.run(
-      `INSERT OR REPLACE INTO providerNodes(id, type, name, data, createdAt, updatedAt) VALUES(?, ?, ?, ?, ?, ?)`,
-      [id, type || null, name || null, stringifyJson(rest), createdAt || new Date().toISOString(), updatedAt || new Date().toISOString()]
-    );
-  }, (n) => ({ id: n.id ?? null, type: n.type ?? null, name: n.name ?? null }));
+  importWithAssertion(adapter, "providerNodes", data.providerNodes || [], (n) => insertNodeRow(adapter, n), (n) => ({ id: n.id ?? null, type: n.type ?? null, name: n.name ?? null }));
 
-  importWithAssertion(adapter, "proxyPools", data.proxyPools || [], (p) => {
-    const { id, isActive, testStatus, createdAt, updatedAt, ...rest } = p;
-    adapter.run(
-      `INSERT OR REPLACE INTO proxyPools(id, isActive, testStatus, data, createdAt, updatedAt) VALUES(?, ?, ?, ?, ?, ?)`,
-      [id, isActive === false ? 0 : 1, testStatus || "unknown", stringifyJson(rest), createdAt || new Date().toISOString(), updatedAt || new Date().toISOString()]
-    );
-  }, (p) => ({ id: p.id ?? null }));
+  importWithAssertion(adapter, "proxyPools", data.proxyPools || [], (p) => insertProxyPoolRow(adapter, p), (p) => ({ id: p.id ?? null }));
 
-  importWithAssertion(adapter, "apiKeys", data.apiKeys || [], (k) => {
-    adapter.run(
-      `INSERT OR REPLACE INTO apiKeys(id, key, name, machineId, isActive, createdAt) VALUES(?, ?, ?, ?, ?, ?)`,
-      [k.id, k.key, k.name || null, k.machineId || null, k.isActive === false ? 0 : 1, k.createdAt || new Date().toISOString()]
-    );
-  }, (k) => ({ id: k.id ?? null, name: k.name ?? null }));
+  importWithAssertion(adapter, "apiKeys", data.apiKeys || [], (k) => insertApiKeyRow(adapter, k), (k) => ({ id: k.id ?? null, name: k.name ?? null }));
 
-  importWithAssertion(adapter, "combos", data.combos || [], (c) => {
-    adapter.run(
-      `INSERT OR REPLACE INTO combos(id, name, kind, models, createdAt, updatedAt) VALUES(?, ?, ?, ?, ?, ?)`,
-      [c.id, c.name, c.kind || null, stringifyJson(c.models || []), c.createdAt || new Date().toISOString(), c.updatedAt || new Date().toISOString()]
-    );
-  }, (c) => ({ id: c.id ?? null, name: c.name ?? null }));
+  importWithAssertion(adapter, "combos", data.combos || [], (c) => insertComboRow(adapter, c), (c) => ({ id: c.id ?? null, name: c.name ?? null }));
 
-  for (const [alias, model] of Object.entries(data.modelAliases || {})) {
-    adapter.run(`INSERT OR REPLACE INTO kv(scope, key, value) VALUES('modelAliases', ?, ?)`, [alias, stringifyJson(model)]);
-  }
-  for (const m of data.customModels || []) {
-    const k = `${m.providerAlias}|${m.id}|${m.type || "llm"}`;
-    adapter.run(`INSERT OR REPLACE INTO kv(scope, key, value) VALUES('customModels', ?, ?)`, [k, stringifyJson(m)]);
-  }
-  for (const [tool, mappings] of Object.entries(data.mitmAlias || {})) {
-    adapter.run(`INSERT OR REPLACE INTO kv(scope, key, value) VALUES('mitmAlias', ?, ?)`, [tool, stringifyJson(mappings || {})]);
-  }
-  for (const [provider, models] of Object.entries(data.pricing || {})) {
-    adapter.run(`INSERT OR REPLACE INTO kv(scope, key, value) VALUES('pricing', ?, ?)`, [provider, stringifyJson(models || {})]);
-  }
+  insertModelAliasRows(adapter, data.modelAliases);
+  insertCustomModelRows(adapter, data.customModels);
+  insertMitmAliasRows(adapter, data.mitmAlias);
+  insertPricingRows(adapter, data.pricing);
 }
 
 function importLegacyUsage(adapter, data) {

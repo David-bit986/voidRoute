@@ -22,12 +22,17 @@ export class AiderAdapter extends BaseAdapter {
     } catch (e) { return null; }
   }
   resetConfig() {
-    const aiderPath = path.join(os.homedir(), '.aider.conf.yml');
     try {
-      if (fs.existsSync(aiderPath)) {
-        let conf = fs.readFileSync(aiderPath, 'utf8');
-        conf = conf.replace(/^openai-api-base:.*$/gm, '').replace(/^openai-api-key:.*$/gm, '').replace(/^model:.*$/gm, '');
-        fs.writeFileSync(aiderPath, conf.replace(/\n{3,}/g, '\n\n').trim() + '\n');
+      let any = false;
+      for (const p of this.resolveConfigPath()) {
+        if (fs.existsSync(p)) {
+          let conf = fs.readFileSync(p, 'utf8');
+          conf = conf.replace(/^openai-api-base:.*$/gm, '').replace(/^openai-api-key:.*$/gm, '').replace(/^model:.*$/gm, '');
+          fs.writeFileSync(p, conf.replace(/\n{3,}/g, '\n\n').trim() + '\n');
+          any = true;
+        }
+      }
+      if (any) {
         console.log(chalk.green(`  ✅ voidRoute config removed from Aider.`));
       } else {
         console.log(chalk.gray('  No config file found.'));
@@ -35,8 +40,10 @@ export class AiderAdapter extends BaseAdapter {
     } catch (e) { console.log(chalk.red(`  ❌ ${e.message}`)); }
   }
   applyConfig(model, endpoint, endpointNoV1) {
-    const aiderPath = path.join(os.homedir(), '.aider.conf.yml');
+    const aiderPath = this.getConfigPath();
     try {
+      const configDir = path.dirname(aiderPath);
+      if (!fs.existsSync(configDir)) fs.mkdirSync(configDir, { recursive: true });
       let conf = fs.existsSync(aiderPath) ? fs.readFileSync(aiderPath, 'utf8') : '';
       conf = conf.replace(/^openai-api-base:.*$/gm, '').replace(/^openai-api-key:.*$/gm, '').replace(/^model:.*$/gm, '').trim();
       const yamlContent = `

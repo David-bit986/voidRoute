@@ -20,8 +20,8 @@ export class PiAdapter extends BaseAdapter {
     } catch (e) { return null; }
   }
   resetConfig() {
-    const piDir = path.join(os.homedir(), '.pi', 'agent');
-    const modelsPath = path.join(piDir, 'models.json');
+    const modelsPath = this.getConfigPath();
+    const piDir = path.dirname(modelsPath);
     const settingsPath = path.join(piDir, 'settings.json');
     try {
       if (fs.existsSync(modelsPath)) {
@@ -41,8 +41,8 @@ export class PiAdapter extends BaseAdapter {
     } catch (e) { console.log(chalk.red(`  ❌ ${e.message}`)); }
   }
   applyConfig(model, endpoint, endpointNoV1, providerModelsList = [], allModelsForProvider, defaultModelForTool, allModelsForPi) {
-    const piDir = path.join(os.homedir(), '.pi', 'agent');
-    const modelsPath = path.join(piDir, 'models.json');
+    const modelsPath = this.getConfigPath();
+    const piDir = path.dirname(modelsPath);
     const settingsPath = path.join(piDir, 'settings.json');
     try {
       if (!fs.existsSync(piDir)) fs.mkdirSync(piDir, { recursive: true });

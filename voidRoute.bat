@@ -1,5 +1,5 @@
 @echo off
-title voidRoute CLI
+title voidRoute Codex Desktop (patched picker)
 cd /d "%~dp0"
-bun run index.js
+bun run codex:launch
 pause
